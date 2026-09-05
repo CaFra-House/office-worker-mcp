@@ -37,11 +37,19 @@ async def run():
                 "sheets_json":json.dumps([{"name":"Resumen","headers":["Rubro","Monto"],"rows":[["Ingresos",100],["Gastos",40]]}])}))
             results["xlsx"]=r; assert r["status"]=="ok" and os.path.exists(r["path"]), r
 
-            # 4 PPTX editable (usa Playwright Chromium — puede tardar ~15s)
-            r=json.loads(await call("create_pptx",{
-                "out_path":f"{d}/d.pptx",
-                "slides_json":json.dumps([{"title":"Portada","kicker":"The Office Worker"},{"title":"Agenda","bullets":["Intro","Resultados"]}])}))
-            results["pptx"]=r; assert r["status"]=="ok" and os.path.exists(r["path"]), r
+            # 4 PPTX editable (usa Playwright Chromium — puede tardar ~15s). Si no hay Playwright, se saltea.
+            try:
+                import playwright  # noqa: F401  (el binario Chromium se asume instalado junto a él)
+                have_pw = True
+            except Exception:
+                have_pw = False
+            if have_pw:
+                r=json.loads(await call("create_pptx",{
+                    "out_path":f"{d}/d.pptx",
+                    "slides_json":json.dumps([{"title":"Portada","kicker":"The Office Worker"},{"title":"Agenda","bullets":["Intro","Resultados"]}])}))
+                results["pptx"]=r; assert r["status"]=="ok" and os.path.exists(r["path"]), r
+            else:
+                results["pptx"]={"status":"skipped","reason":"playwright/chromium no disponible en este entorno"}
 
             # 5-7 PDF input sobre el PDF generado en (1)
             r=json.loads(await call("read_pdf",{"path":results["pdf"]["path"]})); results["read_pdf"]=r; assert r.get("n_pages",0)>=1 and r.get("pages"), r
