@@ -49,6 +49,57 @@ def _check_python_module(module_name: str) -> bool:
         return False
 
 
+_WEASYPROBE_CACHE: dict[str, Any] = {}
+
+
+def _weasyprint_render_probe() -> tuple[bool, str]:
+    """Real render probe: importing weasyprint can succeed on Windows while the native
+    Pango/Cairo/GdkPixbuf shared libraries are missing — in that case any actual render
+    fails. We do one minimal HTML→PDF render to memory (cached per process) so doctor
+    never reports a false 'ACTIVO'.
+
+    Returns:
+        tuple[works: bool, error_detail: str]
+    """
+    if "result" in _WEASYPROBE_CACHE:
+        return _WEASYPROBE_CACHE["result"]
+    works, detail = False, ""
+    try:
+        import io
+
+        from weasyprint import HTML
+
+        HTML(string="<p>probe</p>").write_pdf(io.BytesIO())
+        works, detail = True, ""
+    except ImportError as e:
+        works, detail = False, f"import error: {e}"
+    except Exception as e:  # OSError/dlopen/cairo errors etc.
+        works, detail = False, f"{type(e).__name__}: {e}"
+    _WEASYPROBE_CACHE["result"] = (works, detail)
+    return works, detail
+
+
+def _render_document_install_hint(pkg_mgr: str, probe_error: str = "") -> str:
+    """Install hint for render_document when the real render probe fails.
+
+    If weasyprint imports but rendering fails (missing native libs), the pip package is
+    already present — the hint must point at the C libraries or the Docker image, not at
+    'pip install weasyprint' again.
+    """
+    if probe_error and "import error" not in probe_error.lower():
+        hints = {
+            "apt": "sudo apt update && sudo apt install -y libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0",
+            "dnf": "sudo dnf install -y pango cairo gdk-pixbuf2",
+            "pacman": "sudo pacman -S pango cairo gdk-pixbuf2",
+            "apk": "apk add pango cairo gdk-pixbuf2",
+            "brew": "brew install pango cairo gdk-pixbuf",
+            "winget": ("WeasyPrint needs native Pango/Cairo libs with no unattended Windows installer — "
+                       "use the official Docker image (docker pull ghcr.io/cafra-house/office-worker-mcp) or WSL2"),
+        }
+        return hints.get(pkg_mgr, hints["apt"]) + f"  [probe failed: {probe_error}]"[:400]
+    return get_install_hint("render_document", pkg_mgr)
+
+
 def get_install_hint(cap_key: str, pkg_mgr: str) -> str:
     """Returns the exact installation command for a missing capability on the detected OS."""
     hints = {
@@ -127,7 +178,7 @@ def check_environment() -> dict[str, Any]:
     has_poppler = _check_binary("pdftoppm")
 
     # Python packages
-    has_weasyprint = _check_python_module("weasyprint")
+    has_weasyprint, weasy_error = _weasyprint_render_probe()  # real render probe (no false ACTIVO on Windows)
     has_fitz = _check_python_module("fitz")
     has_pdfplumber = _check_python_module("pdfplumber")
     has_openpyxl = _check_python_module("openpyxl")
@@ -164,9 +215,9 @@ def check_environment() -> dict[str, Any]:
         "render_document": {
             "active": has_weasyprint,
             "type": "python_library",
-            "name": "weasyprint",
+            "name": "weasyprint (+ native Pango/Cairo libs)",
             "required_for": "HTML/CSS to PDF rendering engine",
-            "install_hint": "" if has_weasyprint else get_install_hint("render_document", pkg_mgr),
+            "install_hint": "" if has_weasyprint else _render_document_install_hint(pkg_mgr, weasy_error),
         },
         "pdf_core": {
             "active": has_fitz,
