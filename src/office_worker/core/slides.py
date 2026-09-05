@@ -28,6 +28,7 @@ def create_pptx(out_path, slides=None, theme=None):
     Si slides es None → una portada genérica. Devuelve ruta absoluta del .pptx editable.
     """
     from .themes import load_theme, css_vars
+    from .security import safe_out
     th = load_theme(theme)
 
     parts = []
@@ -45,15 +46,20 @@ def create_pptx(out_path, slides=None, theme=None):
     deck_html = (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
                  f'<style>{css_vars(th)}{_SLIDE_CSS}</style></head><body>{"".join(parts)}</body></html>')
 
-    out_path = os.path.abspath(os.path.expanduser(out_path))
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    out_path = safe_out(out_path)
 
     with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as tf:
         tf.write(deck_html); tmp_html = tf.name
 
     try:
         import asyncio, concurrent.futures
-        from html_to_pptx import convert
+        try:
+            from html_to_pptx import convert
+        except ImportError as e:
+            raise ImportError(
+                "html-to-pptx no está disponible. Instale el extra opcional: pip install 'office-worker-mcp[pptx]' "
+                "y ejecute 'playwright install chromium'."
+            ) from e
         # El MCP server corre con su propio event loop; asyncio.run() fallaría ahí.
         # Ejecutamos convert() en un hilo con su propio loop aislado.
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:

@@ -9,6 +9,7 @@ import os
 from jinja2 import Environment, FileSystemLoader, BaseLoader, StrictUndefined
 
 from .themes import load_theme, css_vars
+from .security import safe_out, safe_url_fetcher
 
 # CSS base compartido por todas las plantillas (usa las variables del tema).
 _BASE_CSS = """
@@ -31,14 +32,37 @@ def _env(template_dir=None):
         return Environment(loader=FileSystemLoader(template_dir), undefined=StrictUndefined, autoescape=False)
     return Environment(loader=BaseLoader(), undefined=StrictUndefined, autoescape=False)
 
-def render_pdf(template_html_or_path, out_path, data=None, theme=None, template_dir=None, logo=None):
+import html
+
+def render_pdf(
+    template_html_or_path,
+    out_path,
+    data=None,
+    theme=None,
+    template_dir=None,
+    logo=None,
+    password=None,
+    watermark_text=None,
+    footer_left=None,
+    footer_right=None,
+    page_numbers=True,
+):
     """Rellena una plantilla HTML (Jinja) con `data` + `theme` y exporta a PDF vía WeasyPrint.
 
     - template_html_or_path: string HTML (con placeholders {{ }}) o ruta a un .html.
     - data: dict de variables para Jinja. Si hay lista 'rows' con 'headers', genera tabla.
     - theme: dict o nombre/ruta (ver themes.load_theme). None → tema ADEN por defecto.
     - logo: ruta a archivo de imagen (PNG/JPG) a insertar en la cabecera vía CSS WeasyPrint.
-    Devuelve la ruta absoluta del PDF generado. Crea out_path si no existe.
+    - password: clave opcional para cifrar el PDF resultante (pypdf encrypt).
+    - watermark_text: texto diagonal semitransparente (ej: 'CONFIDENCIAL').
+    - footer_left / footer_right: texto en las esquinas inferiores izquierda y derecha.
+    - page_numbers: booleano (default True) para mostrar 'Página X de Y' en el centro inferior.
+    Devuelve la ruta absoluta del PDF generado.
+
+    Seguridad:
+    - Valida out_path con safe_out contra path traversal y sobreescritura de sistema.
+    - Utiliza safe_url_fetcher contra SSRF remoto y acceso a archivos sensibles (/etc).
+    Limitación residual: WeasyPrint puede leer archivos locales permitidos legibles por el proceso si no se define OFFICE_WORKER_ALLOWED_DIR.
     """
     import pathlib
     from weasyprint import HTML
@@ -76,14 +100,55 @@ def render_pdf(template_html_or_path, out_path, data=None, theme=None, template_
 """
         ctx.setdefault("logo", logo_uri)
 
+    footer_css_parts = []
+    if not page_numbers:
+        footer_css_parts.append("@bottom-center { content: none; }")
+    if footer_left:
+        esc_fl = str(footer_left).replace("\\", "\\\\").replace('"', '\\"')
+        footer_css_parts.append(f'@bottom-left {{ content: "{esc_fl}"; font-size: 8pt; color: var(--ow-muted); }}')
+    if footer_right:
+        esc_fr = str(footer_right).replace("\\", "\\\\").replace('"', '\\"')
+        footer_css_parts.append(f'@bottom-right {{ content: "{esc_fr}"; font-size: 8pt; color: var(--ow-muted); }}')
+
+    footer_css = f"\n@page {{\n  {' '.join(footer_css_parts)}\n}}\n" if footer_css_parts else ""
+
+    watermark_css = ""
+    watermark_html = ""
+    if watermark_text:
+        watermark_css = """
+.ow-watermark {
+  position: fixed;
+  top: 35%;
+  left: 5%;
+  width: 90%;
+  text-align: center;
+  transform: rotate(-35deg);
+  font-size: 52pt;
+  font-weight: bold;
+  color: rgba(180, 180, 180, 0.25);
+  z-index: -1000;
+  pointer-events: none;
+  text-transform: uppercase;
+}
+"""
+        watermark_html = f'<div class="ow-watermark">{html.escape(str(watermark_text))}</div>'
+
     body = tmpl.render(**ctx)
 
     html_doc = f"""<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
-<style>{css_vars(th)}{_BASE_CSS}{logo_css}</style></head><body>{body}</body></html>"""
+<style>{css_vars(th)}{_BASE_CSS}{logo_css}{footer_css}{watermark_css}</style></head><body>{watermark_html}{body}</body></html>"""
 
-    out_path = os.path.abspath(os.path.expanduser(out_path))
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    HTML(string=html_doc).write_pdf(out_path)
+    out_path = safe_out(out_path)
+    HTML(string=html_doc, url_fetcher=safe_url_fetcher).write_pdf(out_path)
+
+    if password:
+        from pypdf import PdfReader, PdfWriter
+        reader = PdfReader(out_path)
+        writer = PdfWriter()
+        writer.append(reader)
+        writer.encrypt(user_password=password)
+        with open(out_path, "wb") as f_enc:
+            writer.write(f_enc)
 
     if os.path.getsize(out_path) < 500:
         raise RuntimeError(f"PDF generado sospechosamente pequeño ({os.path.getsize(out_path)}B): revisar plantilla/datos")

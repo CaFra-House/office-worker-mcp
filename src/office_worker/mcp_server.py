@@ -1,18 +1,21 @@
 """The Office Worker — MCP server (cara delgada sobre office_worker.core).
 
-Meta: pocas tools poderosas (~12 aquí), no 47 CRUD genéricas → bajo overhead de contexto.
+Meta: herramientas poderosas y especializadas (~20 aquí), bajo overhead de contexto (<2000 tok).
 Cada tool crea/lee un archivo real y devuelve {status, path, ...} o {status:"error", error}.
-Regla anti-loop en instructions: si una tool falla 2 veces, NO reintentar con variantes.
+Regla anti-loop en instructions: si una tool falla 2 veces seguidas, NO reintentar con variantes.
 """
 from __future__ import annotations
 import os, json
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from office_worker.core import (
     render_pdf as _render_pdf,
     create_word as _create_word,
+    edit_word as _edit_word,
     create_excel as _create_excel,
+    edit_excel as _edit_excel,
     create_pptx as _create_pptx,
     read_pdf as _read_pdf,
     extract_tables as _extract_tables,
@@ -21,86 +24,182 @@ from office_worker.core import (
     ocr_pdf as _ocr_pdf,
     convert_office_to_pdf as _convert_office_to_pdf,
     manipulate_pdf as _manipulate_pdf,
+    sign_pdf as _sign_pdf,
+    compress_pdf as _compress_pdf,
+    pdf_to_excel as _pdf_to_excel,
+    read_office as _read_office,
+    list_packaged_templates as _list_packaged_templates,
     load_theme, DEFAULT_THEME,
 )
 
 mcp = FastMCP(
     "office-worker",
     instructions=(
-        "The Office Worker: genera documentos de oficina profesionales (PDF/Word/Excel/PPTX) "
-        "desde datos + tema corporativo, lee y procesa PDFs (texto/tablas/formularios/OCR/manipulación), "
-        "y convierte documentos Office a PDF. Usa la tool que corresponda al formato pedido. "
-        "Regla anti-loop: si una llamada falla 2 veces, NO reintentes con variantes; reporta el error exacto y detente."
+        "The Office Worker: generates and edits professional office documents (PDF, Word/DOCX, Excel/XLSX, PowerPoint/PPTX) "
+        "locally with corporate styling, packaged Word templates (docxtpl), in-place edits, native Excel charts, formulas, "
+        "batch pipelines, PDF processing (text, tables, forms, OCR, compression, signature, images base64), and Office-to-PDF conversion. "
+        "Choose the exact tool matching your target document format. "
+        "Hard Anti-Loop Rule: if any tool call fails 2 consecutive times, STOP immediately and report the exact error to the user."
     ),
 )
 
 
-def _ok(path): return {"status": "ok", "path": os.path.abspath(path), "bytes": os.path.getsize(path)}
+def _ok(path: str) -> dict:
+    return {"status": "ok", "path": os.path.abspath(path), "bytes": os.path.getsize(path)}
+
 
 @mcp.tool()
-def render_document(template_html: str, out_path: str, data_json: str = "{}", theme: str | None = None, logo: str | None = None) -> dict:
-    """Genera un PDF profesional desde plantilla HTML/Jinja + datos + tema (+ logo opcional en header)."""
-    try: data = json.loads(data_json or "{}") or {}
-    except json.JSONDecodeError as e: return {"status":"error","error":f"data_json inválido: {e}"}
+def render_document(
+    template_html: str,
+    out_path: str,
+    data_json: str = "{}",
+    theme: str | None = None,
+    logo: str | None = None,
+    password: str | None = None,
+    watermark_text: str = "",
+    footer_left: str = "",
+    footer_right: str = "",
+    page_numbers: bool = True,
+) -> dict:
+    """Generates professional PDF document (invoice, report, executive summary, letter, balance statement) from Jinja HTML template, corporate theme, data, and design options (watermark, header logo, footers, page numbers, encryption). Returns JSON with status, absolute file path, and byte size. When to use: Use when creating polished, high-fidelity PDFs from structured data and HTML/CSS templates. When NOT to use: Do NOT use for editing existing PDF/Office files (use edit_word/edit_excel/pdf_manipulate) or when pure Office formats (.docx, .xlsx, .pptx) are required. Keywords: invoice, report, letter, contract, executive summary, balance statement, template, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    try:
+        data = json.loads(data_json or "{}") or {}
+    except json.JSONDecodeError as e:
+        return {"status": "error", "error": f"data_json inválido: {e}"}
     if isinstance(data.get("rows"), list):
-        headers=data.get("headers") or []
-        thead="".join(f"<th>{h}</th>" for h in headers)
-        body="\n".join("<tr>"+"".join(f"<td>{c}</td>" for c in r)+"</tr>" for r in data["rows"])
-        data["tabla"]=f"<table><thead><tr>{thead}</tr></thead><tbody>{body}</tbody></table>"
-    try: return _ok(_render_pdf(template_html, out_path, data=data, theme=theme, logo=logo))
-    except Exception as e: return {"status":"error","error":str(e)}
+        headers = data.get("headers") or []
+        thead = "".join(f"<th>{h}</th>" for h in headers)
+        body = "\n".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in data["rows"])
+        data["tabla"] = f"<table><thead><tr>{thead}</tr></thead><tbody>{body}</tbody></table>"
+    try:
+        return _ok(_render_pdf(
+            template_html,
+            out_path,
+            data=data,
+            theme=theme,
+            logo=logo,
+            password=password,
+            watermark_text=watermark_text,
+            footer_left=footer_left,
+            footer_right=footer_right,
+            page_numbers=page_numbers,
+        ))
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 
 @mcp.tool()
-def create_word(out_path: str, title: str = "", subtitle: str | None = None, blocks_json: str = "[]", theme: str | None = None) -> dict:
-    """Crea un .docx. blocks_json: JSON lista de {"type":"h1|h2|p|table","text"|"headers"/"rows"}."""
-    try: blocks=json.loads(blocks_json or "[]") or []
-    except json.JSONDecodeError as e: return {"status":"error","error":f"blocks_json inválido: {e}"}
-    try: return _ok(_create_word(out_path,title=title,subtitle=subtitle,blocks=blocks,theme=theme))
-    except Exception as e: return {"status":"error","error":str(e)}
+def create_word(
+    out_path: str,
+    title: str = "",
+    subtitle: str | None = None,
+    blocks_json: str = "[]",
+    theme: str | None = None,
+    template_docx: str | None = None,
+    context: dict | str = {},
+) -> dict:
+    """Creates professional Word .docx document (minutes, letter, contract, report, audit checklist) from declarative blocks or packaged templates (acta_meeting, informe_ejecutivo, factura_simple, carta_formal, checklist_auditoria). Returns JSON with status, absolute file path, and byte size. When to use: Use to generate new .docx documents with consistent corporate theme or standard templates with {{ variables }}. When NOT to use: Do NOT use to modify existing .docx files in place (use edit_word instead) or to produce PDFs directly (use render_document or convert_to_pdf). Keywords: minutes, letter, contract, report, audit, checklist, invoice, executive summary, template, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    try:
+        blocks = json.loads(blocks_json or "[]") or []
+    except json.JSONDecodeError as e:
+        return {"status": "error", "error": f"blocks_json inválido: {e}"}
+    if isinstance(context, str):
+        try:
+            ctx = json.loads(context or "{}") if context else {}
+        except json.JSONDecodeError as e:
+            return {"status": "error", "error": f"context inválido: {e}"}
+    else:
+        ctx = dict(context or {})
+    try:
+        return _ok(_create_word(out_path, title=title, subtitle=subtitle, blocks=blocks, theme=theme, template_docx=template_docx, context=ctx))
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 
 @mcp.tool()
-def create_excel(out_path: str, title: str = "", sheets_json: str = "[]", theme: str | None = None) -> dict:
-    """Crea un .xlsx. sheets_json: JSON lista de {"name","headers":[...],"rows":[[...]]}."""
-    try: sheets=json.loads(sheets_json or "[]") or []
-    except json.JSONDecodeError as e: return {"status":"error","error":f"sheets_json inválido: {e}"}
-    try: return _ok(_create_excel(out_path,title=title,sheets=sheets or None,theme=theme))
-    except Exception as e: return {"status":"error","error":str(e)}
+def create_excel(
+    out_path: str,
+    title: str = "",
+    sheets_json: str = "[]",
+    theme: str | None = None,
+    table_style: str | None = None,
+    auto_filter: bool = False,
+) -> dict:
+    """Creates professional multi-sheet Excel .xlsx workbook (balance statement, financial report, audit checklist) with corporate styling, optional structured tables, auto-filters, formulas, and native charts (bar, line, pie). Returns JSON with status, absolute file path, and byte size. When to use: Use to generate new spreadsheets with tables, headers, zebra-striping, and charts. When NOT to use: Do NOT use to modify existing workbooks in place (use edit_excel instead) or for VBA macros (openpyxl does not run macros). Keywords: balance statement, report, audit, checklist, chart, formulas, local, private, no api key, offline, cross-platform, no office install needed, deterministic, safe."""
+    try:
+        sheets = json.loads(sheets_json or "[]") or []
+    except json.JSONDecodeError as e:
+        return {"status": "error", "error": f"sheets_json inválido: {e}"}
+    try:
+        return _ok(_create_excel(out_path, title=title, sheets=sheets or None, theme=theme, table_style=table_style, auto_filter=auto_filter))
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 
 @mcp.tool()
 def create_pptx(out_path: str, slides_json: str = "[]", theme: str | None = None) -> dict:
-    """Crea un .pptx EDITABLE. slides_json: JSON lista de {"title","kicker","bullets":[...]}."""
-    try: slides=json.loads(slides_json or "[]") or []
-    except json.JSONDecodeError as e: return {"status":"error","error":f"slides_json inválido: {e}"}
-    try: return _ok(_create_pptx(out_path,slides=slides or None,theme=theme))
-    except Exception as e: return {"status":"error","error":str(e)}
+    """Creates editable native PowerPoint .pptx presentation (deck, executive summary, status report) from structured slide definitions with corporate theme. Returns JSON with status, absolute file path, and byte size. When to use: Use to generate editable PowerPoint slides with real typography, kicker badges, bullet lists, and tables. When NOT to use: Do NOT use for PDFs (use render_document) or Word documents (use create_word). Keywords: executive summary, report, deck, presentation, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    try:
+        slides = json.loads(slides_json or "[]") or []
+    except json.JSONDecodeError as e:
+        return {"status": "error", "error": f"slides_json inválido: {e}"}
+    try:
+        return _ok(_create_pptx(out_path, slides=slides or None, theme=theme))
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 
 @mcp.tool()
-def read_pdf(path: str, max_pages: int | None = None) -> dict:
-    """Lee texto + metadatos de un PDF (input). Devuelve páginas con su texto."""
-    try: return _read_pdf(path,max_pages=max_pages) | {"status":"ok"}
-    except Exception as e: return {"status":"error","error":str(e)}
+def read_pdf(
+    path: str,
+    max_pages: int | None = None,
+    extract_tables: bool = False,
+    list_forms: bool = False,
+    extract_images: bool = False,
+    max_images: int = 10,
+) -> dict:
+    """Reads text and metadata from PDF files (report, invoice, contract, audit) with optional table extraction, AcroForm field listing, and embedded image extraction as base64 data URLs for agent vision. Returns JSON with page text, metadata, tables, form fields, and base64 images. When to use: Use as the primary tool to inspect, parse, and analyze any PDF document. When NOT to use: Do NOT use for scanned image-only PDFs without text layers (use pdf_ocr instead). Keywords: read, report, invoice, contract, audit, table, form, images, vision, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    try:
+        return _read_pdf(
+            path,
+            max_pages=max_pages,
+            extract_tables=extract_tables,
+            list_forms=list_forms,
+            extract_images=extract_images,
+            max_images=max_images,
+        ) | {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 
 @mcp.tool()
 def pdf_extract_tables(path: str, max_pages: int | None = None) -> dict:
-    """Extrae tablas estructuradas de un PDF (pdfplumber)."""
-    try: return _extract_tables(path,max_pages=max_pages) | {"status":"ok"}
-    except Exception as e: return {"status":"error","error":str(e)}
+    """[DEPRECATED: prefer read_pdf(path, extract_tables=True)] Extracts structured tables from PDF pages (balance statement, financial report) via pdfplumber. Returns JSON with tables by page and total count. When to use: Legacy tool; prefer read_pdf. When NOT to use: Do NOT use for general PDF reading. Keywords: read, table, balance statement, report, local, private, offline."""
+    try:
+        return _extract_tables(path, max_pages=max_pages) | {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 
 @mcp.tool()
 def pdf_list_form_fields(path: str) -> dict:
-    """Lista campos de formulario AcroForm de un PDF (vacío si no es form)."""
-    try: return _list_form_fields(path) | {"status":"ok"}
-    except Exception as e: return {"status":"error","error":str(e)}
+    """[DEPRECATED: prefer read_pdf(path, list_forms=True)] Lists interactive AcroForm form fields in a PDF. Returns JSON with field names and types. When to use: Legacy tool; prefer read_pdf. When NOT to use: Do NOT use to fill form fields (use pdf_fill_form). Keywords: read, form, fill form, contract, local, private, offline."""
+    try:
+        return _list_form_fields(path) | {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 
 @mcp.tool()
 def list_themes(theme_name_or_path: str | None = None) -> dict:
-    """Devuelve el tema resuelto (paleta+fuente) para usarlo como referencia de diseño."""
+    """Returns corporate color palette and typography configuration for consistent document styling (aden, claro, oscuro, minimal, corporate-blue). Returns JSON with theme details. When to use: Use to inspect active color codes and font settings before creating documents. When NOT to use: Do NOT use to create documents directly. Keywords: theme, style, colors, report, local, private, offline."""
     t = load_theme(theme_name_or_path) if theme_name_or_path else dict(DEFAULT_THEME)
-    return {"status":"ok","theme":t}
+    return {"status": "ok", "theme": t}
+
 
 @mcp.tool()
 def pdf_fill_form(input_pdf: str, output: str, fields: dict[str, str] | str = {}) -> dict:
-    """Rellena campos de un formulario PDF interactivo (AcroForm)."""
+    """Fills interactive AcroForm form fields in a PDF (contract, tax form, registration) with key-value data. Returns JSON with status, filled file path, and byte size. When to use: Use to fill standardized PDF forms deterministically. When NOT to use: Do NOT use for flat or scanned PDFs without AcroForm fields (use render_document or pdf_ocr). Keywords: fill form, contract, report, audit, local, private, no api key, offline, cross-platform, deterministic, safe."""
     try:
         f = json.loads(fields) if isinstance(fields, str) else (fields or {})
     except json.JSONDecodeError as e:
@@ -110,11 +209,12 @@ def pdf_fill_form(input_pdf: str, output: str, fields: dict[str, str] | str = {}
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+
 @mcp.tool()
-def pdf_ocr(input_path: str, lang: str = "spa", output: str | None = None) -> dict:
-    """Extrae texto de una imagen o PDF vía OCR (Tesseract). Si se indica output, guarda PDF con capa de texto."""
+def pdf_ocr(input_path: str, lang: str = "spa", output: str | None = None, max_pages: int | None = None) -> dict:
+    """Performs optical character recognition (OCR) on scanned documents (invoice, receipt, minutes, audit checklist) or images using Tesseract, returning extracted text and optionally generating a searchable PDF. Returns JSON with text and output path. When to use: Use on scanned documents lacking digital text layers. When NOT to use: Do NOT use on digital PDFs with existing selectable text (use read_pdf instead). Keywords: ocr, scan, invoice, minutes, receipt, audit, convert, local, private, no api key, offline, cross-platform, deterministic, safe."""
     try:
-        text = _ocr_pdf(input_path, lang=lang, out=output)
+        text = _ocr_pdf(input_path, lang=lang, out=output, max_pages=max_pages)
         if output:
             res = _ok(output)
             res["text"] = text
@@ -123,13 +223,33 @@ def pdf_ocr(input_path: str, lang: str = "spa", output: str | None = None) -> di
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+
 @mcp.tool()
 def convert_to_pdf(input_file: str, output: str) -> dict:
-    """Convierte documentos Office (.docx, .xlsx, .pptx) a PDF usando LibreOffice headless."""
+    """Converts Office documents (.docx, .xlsx, .pptx: contract, report, letter, balance statement) to PDF locally using headless LibreOffice, reporting honest fidelity (clean/lossy) and conversion warnings. Returns JSON with status, output path, byte size, fidelity rating, and warnings list. When to use: Use to export Office files to PDF without external cloud APIs. When NOT to use: Do NOT use when creating documents from scratch (use render_document). Keywords: convert, contract, letter, report, balance statement, local, private, no api key, offline, cross-platform, linux, mac, windows, deterministic, safe."""
     try:
-        return _ok(_convert_office_to_pdf(input_file, output))
+        res_path = _convert_office_to_pdf(input_file, output)
+        res = _ok(res_path)
+        ext = Path(input_file).suffix.lower()
+        warnings = []
+        if ext in (".docx", ".doc"):
+            warnings.append("LibreOffice headless conversion may have minor font substitution or pagination shifts.")
+            fidelity = "clean"
+        elif ext in (".xlsx", ".xls"):
+            warnings.append("LibreOffice headless converts worksheets without configured print areas into automatic page breaks.")
+            fidelity = "clean"
+        elif ext in (".pptx", ".ppt"):
+            warnings.append("Slide transitions, animations, and embedded media are flattened.")
+            fidelity = "clean"
+        else:
+            warnings.append(f"Format {ext} converted with best-effort standard filter.")
+            fidelity = "lossy"
+        res["fidelity"] = fidelity
+        res["warnings"] = warnings
+        return res
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
 
 @mcp.tool()
 def pdf_manipulate(
@@ -139,8 +259,9 @@ def pdf_manipulate(
     files: list[str] | str | None = None,
     pages: str | None = None,
     angle: int = 90,
+    password: str | None = None,
 ) -> dict:
-    """Manipula PDFs: unir (merge), extraer páginas (extract) o rotar (rotate)."""
+    """Manipulates PDF documents (report, contract, minutes): merge multiple files, extract page ranges (split), or rotate pages with optional password encryption. Returns JSON with status, output path, and byte size. When to use: Use for page-level PDF reorganization (merge, split/extract, rotate). When NOT to use: Do NOT use for editing text or internal content within pages. Keywords: merge, split, extract, rotate, contract, report, minutes, local, private, no api key, offline, cross-platform, deterministic, safe."""
     try:
         file_list = files
         if isinstance(files, str):
@@ -155,11 +276,180 @@ def pdf_manipulate(
             files=file_list,
             pages=pages,
             angle=angle,
+            password=password,
         ))
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
 
-def main(): mcp.run()
+@mcp.tool()
+def list_templates() -> dict:
+    """Lists packaged Word templates (acta_meeting, informe_ejecutivo, factura_simple, carta_formal, checklist_auditoria) with descriptions, keywords, and expected variable schemas. Returns JSON with template catalog. When to use: Call before create_word to inspect available official templates and required context keys. When NOT to use: Do NOT use to generate files (use create_word with template_docx). Keywords: template, minutes, report, invoice, letter, audit, checklist, local, private, offline."""
+    return {"status": "ok", "templates": _list_packaged_templates()}
 
-if __name__ == "__main__": main()
+
+@mcp.tool()
+def pdf_compress(input_path: str, output: str, quality: str = "med") -> dict:
+    """Compresses and optimizes PDF documents (report, scan, balance statement) by downsampling embedded images and cleaning unused objects via PyMuPDF. Returns JSON with status, output path, before/after byte size, and savings percentage. When to use: Use to shrink large PDFs before emailing or archiving. When NOT to use: Do NOT use on text-only PDFs where image optimization yields no benefit. Keywords: compress, optimize, report, scan, balance statement, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    try:
+        return _compress_pdf(input_path, output, quality=quality)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def sign_pdf(
+    input_pdf: str,
+    output: str,
+    sello_img_path: str = "",
+    cert_pem: str = "",
+    reason: str = "",
+    location: str = "",
+) -> dict:
+    """Signs PDF documents (contract, letter, minutes, invoice): stamps visual PNG signature/seal on target page and applies cryptographic PAdES digital signature if X.509 PEM certificate is provided. Returns JSON with status, signed file path, and byte size. When to use: Use to approve, endorse, or sign official business documents. When NOT to use: Do NOT use for modifying document content (use edit_word or render_document). Keywords: sign, stamp, contract, minutes, letter, invoice, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    try:
+        return _ok(_sign_pdf(
+            input_pdf=input_pdf,
+            output=output,
+            sello_img_path=sello_img_path or None,
+            cert_pem=cert_pem or None,
+            reason=reason or None,
+            location=location or None,
+        ))
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def edit_excel(
+    input_path: str,
+    operations: list[dict] | str = "[]",
+    output_path: str | None = None,
+) -> dict:
+    """Modifies an existing Excel workbook (.xlsx / .xlsm: balance statement, financial report, audit) in place or to a new file via openpyxl, preserving styles, formatting, and VBA macros (keep_vba). Supports set_cell, append_row, add_column, add_chart (bar, line, pie), add_table, auto_filter, and formulas (SUM, SUMIF, AVERAGEIF, VLOOKUP, XLOOKUP, COUNTIFS). Returns JSON with status, path, fidelity, warnings, and operations count. When to use: Use to update existing spreadsheets without recreating them from scratch. When NOT to use: Do NOT use to build new spreadsheets from nothing (use create_excel) or to run VBA macros. Keywords: edit in place, balance statement, report, audit, formula, chart, local, private, no api key, offline, cross-platform, no office install needed, deterministic, safe."""
+    try:
+        return _edit_excel(input_path, operations=operations, output_path=output_path)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def edit_word(
+    input_path: str,
+    operations: list[dict] | str = "[]",
+    output_path: str | None = None,
+) -> dict:
+    """Modifies an existing Word document (.docx: contract, letter, minutes, report, audit checklist) in place or to a new file via python-docx, preserving styles. Supports append_paragraph, replace_text, insert_after_heading, and append_table. Returns JSON with status, path, fidelity, warnings, and operations count. When to use: Use to revise, update, or patch existing .docx files. When NOT to use: Do NOT use to create new documents from scratch (use create_word) or to edit PDFs directly. Keywords: edit in place, contract, letter, minutes, report, audit, checklist, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    try:
+        return _edit_word(input_path, operations=operations, output_path=output_path)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def pdf_to_excel(
+    input_path: str,
+    output_path: str,
+    sheet_name: str = "Sheet1",
+    max_pages: int | None = None,
+) -> dict:
+    """Extracts structured tabular data from PDF files (balance statement, invoice, audit report) into a clean Excel .xlsx workbook via pdfplumber and openpyxl with honest fidelity reporting. Returns JSON with status, path, tables count, pages processed, fidelity, and warnings. When to use: Use when tabular data locked in PDF reports needs to be exported to Excel for analysis. When NOT to use: Do NOT use for scanned image PDFs without selectable tables (use pdf_ocr) or unstructured text PDFs. Keywords: convert, balance statement, invoice, report, audit, table, local, private, no api key, offline, cross-platform, no office install needed, deterministic, safe."""
+    try:
+        return _pdf_to_excel(input_path, output_path, sheet_name=sheet_name, max_pages=max_pages)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def read_office(
+    path: str,
+    max_rows: int = 500,
+) -> dict:
+    """Extracts structured text, paragraphs, slides, and tables from Word (.docx), PowerPoint (.pptx), and Excel (.xlsx / .xlsm) files. Returns JSON with format, structured elements (paragraphs, slides, sheets), table contents, and full text. When to use: Use to inspect, search, and extract content from Office documents directly without converting to PDF. When NOT to use: Do NOT use for PDF files (use read_pdf instead). Keywords: read, report, minutes, letter, contract, deck, balance statement, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    try:
+        return _read_office(path, max_rows=max_rows)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def office_batch(
+    operations: list[dict] | str = "[]",
+) -> dict:
+    """Executes multiple document operations sequentially in a single turn without round-trips; continues on error and reports individual results. Returns JSON with total, succeeded, failed count, and step results list. When to use: Use to execute multi-step document pipelines (e.g. generate report + convert to PDF + sign). When NOT to use: Do NOT use for single operations or when later steps require conversational branching. Keywords: batch, pipeline, workflow, invoice, report, minutes, letter, contract, audit, checklist, executive summary, balance statement, convert, sign, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    if isinstance(operations, str):
+        try:
+            ops = json.loads(operations or "[]") or []
+        except json.JSONDecodeError as e:
+            return {"status": "error", "error": f"operations JSON inválido: {e}"}
+    else:
+        ops = list(operations or [])
+
+    dispatcher = {
+        "render_document": render_document,
+        "create_word": create_word,
+        "create_excel": create_excel,
+        "create_pptx": create_pptx,
+        "read_pdf": read_pdf,
+        "list_themes": list_themes,
+        "pdf_fill_form": pdf_fill_form,
+        "pdf_ocr": pdf_ocr,
+        "convert_to_pdf": convert_to_pdf,
+        "pdf_manipulate": pdf_manipulate,
+        "list_templates": list_templates,
+        "pdf_compress": pdf_compress,
+        "sign_pdf": sign_pdf,
+        "edit_excel": edit_excel,
+        "edit_word": edit_word,
+        "pdf_to_excel": pdf_to_excel,
+        "read_office": read_office,
+    }
+
+    results = []
+    succeeded = 0
+    failed = 0
+
+    for i, op in enumerate(ops):
+        tool_name = op.get("tool") or op.get("name")
+        args = op.get("args") or op.get("arguments") or {}
+
+        if not tool_name or tool_name not in dispatcher:
+            results.append({
+                "index": i,
+                "tool": tool_name,
+                "status": "error",
+                "error": f"Tool desconocida o no soportada: '{tool_name}'. Disponibles: {list(dispatcher.keys())}",
+            })
+            failed += 1
+            continue
+
+        fn = dispatcher[tool_name]
+        try:
+            res = fn(**args)
+            if isinstance(res, dict) and res.get("status") == "error":
+                results.append({"index": i, "tool": tool_name, "status": "error", "error": res.get("error")})
+                failed += 1
+            else:
+                results.append({"index": i, "tool": tool_name, "status": "ok", "result": res})
+                succeeded += 1
+        except Exception as exc:
+            results.append({"index": i, "tool": tool_name, "status": "error", "error": str(exc)})
+            failed += 1
+
+    status = "ok" if failed == 0 else ("partial_error" if succeeded > 0 else "error")
+    return {
+        "status": status,
+        "total": len(ops),
+        "succeeded": succeeded,
+        "failed": failed,
+        "results": results,
+    }
+
+
+def main():
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()
+
