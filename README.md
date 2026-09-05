@@ -1,5 +1,10 @@
 # The Office Worker — `office-worker-mcp`
 
+![CI](https://github.com/CaFra-House/office-worker-mcp/actions/workflows/ci.yml/badge.svg)
+![PyPI version](https://img.shields.io/pypi/v/office-worker-mcp)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/office-worker-mcp)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+
 > **Your agent's document clerk.** Genera documentos de oficina profesionales —
 > **PDF, Word, Excel y PowerPoint** — desde datos + un tema corporativo, y lee PDFs
 > (texto, tablas y formularios). Diseñado para agentes de IA (Hermes, Claude, Cursor)
