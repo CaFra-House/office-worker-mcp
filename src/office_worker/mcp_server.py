@@ -19,6 +19,7 @@ from office_worker.core import (
     edit_excel as _edit_excel,
     csv_excel_convert as _csv_excel_convert,
     create_pptx as _create_pptx,
+    edit_pptx as _edit_pptx,
     read_pdf as _read_pdf,
     pdf_preview as _pdf_preview,
     pdf_extract_structured as _pdf_extract_structured,
@@ -419,6 +420,19 @@ def edit_word(
 
 
 @mcp.tool()
+def edit_pptx(
+    input_path: str,
+    operations: list = [],
+    output_path: str = "",
+) -> dict:
+    """Modifies an existing PowerPoint presentation (.pptx: presentation, deck, slide, executive summary, status report) in place or to a new file via python-pptx, preserving styles, theme, and charts. Supports replace_text, set_slide_title, add_slide, delete_slide, append_bullets, and set_notes. Returns JSON with status, path, fidelity, warnings, and operations count. When to use: Use to modify, update, or patch existing PowerPoint .pptx decks in place or save to a new file. When NOT to use: Do NOT use to create new presentations from scratch (use create_pptx) or for PDFs (use render_document). Keywords: edit pptx in place, presentation, deck, slide, local, private, no api key, offline, deterministic."""
+    try:
+        return _edit_pptx(input_path, operations=operations, output_path=output_path or None)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
 def pdf_to_excel(
     input_path: str,
     output_path: str,
@@ -631,6 +645,7 @@ def office_batch(
         "edit_excel": edit_excel,
         "csv_excel_convert": csv_excel_convert,
         "create_pptx": create_pptx,
+        "edit_pptx": edit_pptx,
         "read_pdf": read_pdf,
         "pdf_preview": pdf_preview,
         "list_themes": list_themes,

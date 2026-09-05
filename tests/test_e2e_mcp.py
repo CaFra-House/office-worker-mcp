@@ -24,7 +24,7 @@ async def test_office_worker_mcp_e2e(tmp_path):
         async with ClientSession(r, w) as s:
             await s.initialize()
             tools = [t.name for t in (await s.list_tools()).tools]
-            assert len(tools) == 29 and "create_book" in tools and "environment_status" in tools and "document_diff" in tools and "scrub_metadata" in tools and "protect_office" in tools and "verify_pdf_signature" in tools and "render_document" in tools and "pdf_preview" in tools and "pdf_redact" in tools and "pdf_extract_structured" in tools and "mail_merge" in tools and "csv_excel_convert" in tools, f"tools inesperadas: {tools}"
+            assert len(tools) == 30 and "edit_pptx" in tools and "create_book" in tools and "environment_status" in tools and "document_diff" in tools and "scrub_metadata" in tools and "protect_office" in tools and "verify_pdf_signature" in tools and "render_document" in tools and "pdf_preview" in tools and "pdf_redact" in tools and "pdf_extract_structured" in tools and "mail_merge" in tools and "csv_excel_convert" in tools, f"tools inesperadas: {tools}"
 
             async def call(name, args): return json.loads((await s.call_tool(name, args)).content[0].text)
 
@@ -501,6 +501,23 @@ async def test_office_worker_mcp_e2e(tmp_path):
             from pptx import Presentation
             prs_e2e = Presentation(r_pptx_chart["path"])
             assert any(s.has_chart for s in prs_e2e.slides[0].shapes)
+
+            # 30.b edit_pptx E2E (in-place modification with python-pptx)
+            r_edit_pptx = await call("edit_pptx", {
+                "input_path": r_pptx_chart["path"],
+                "operations": [
+                    {"op": "replace_text", "find": "Métricas", "replace": "Indicadores"},
+                    {"op": "add_slide", "title": "Conclusiones E2E", "bullets": ["Objetivo cumplido", "Rendimiento alto"]},
+                    {"op": "set_notes", "slide_index": 0, "notes": "Notas del presentador E2E"},
+                ]
+            })
+            assert r_edit_pptx["status"] == "ok" and os.path.exists(r_edit_pptx["path"]), r_edit_pptx
+            assert r_edit_pptx.get("fidelity") == "high"
+            assert r_edit_pptx.get("operations") == 3
+            prs_edited = Presentation(r_edit_pptx["path"])
+            assert len(prs_edited.slides) == 2
+            assert "Notas del presentador E2E" in prs_edited.slides[0].notes_slide.notes_text_frame.text
+            assert any(s.has_chart for s in prs_edited.slides[0].shapes)
 
             # 31 office_batch con nuevas tools v0.7.0
             r_batch_v7 = await call("office_batch", {

@@ -8,19 +8,15 @@
     "url": "https://github.com/CaFra-House/office-worker-mcp",
     "id": "1358126077"
   },
-  "version_detail": {
-    "version": "0.9.4",
-    "release_date": "2026-09-05"
-  },
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "office-worker-mcp",
-      "version": "0.9.4",
+      "version": "0.9.5",
       "transport": {
         "type": "stdio"
       }
     }
   ],
-  "version": "0.9.4"
+  "version": "0.9.5"
 }

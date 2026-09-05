@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from office_worker.core.templates import render_pdf
 from office_worker.core.word import create_word, edit_word, mail_merge
 from office_worker.core.excel import create_excel, edit_excel, csv_excel_convert
-from office_worker.core.slides import create_pptx
+from office_worker.core.slides import create_pptx, edit_pptx
 from office_worker.core.themes import load_theme, THEMES
 from office_worker.core.pdf import read_pdf, extract_tables, list_form_fields, pdf_preview, pdf_extract_structured
 from office_worker.core.security import safe_out, safe_url_fetcher
@@ -583,6 +583,92 @@ def test_edit_word(tmp_path):
     assert "Párrafo final agregado." in full_text
     assert "Aclaración inmediata." in full_text
     assert len(doc.tables) > 0
+
+
+def test_edit_pptx_actions(tmp_path):
+    from pptx import Presentation
+
+    pptx_in = str(tmp_path / "base_deck.pptx")
+    pptx_out = str(tmp_path / "edited_deck.pptx")
+
+    create_pptx(pptx_in, slides=[
+        {"title": "Initial Pitch Deck", "kicker": "CONFIDENTIAL", "bullets": ["Original bullet 1", "Original bullet 2"]},
+        {"title": "Market Analysis", "bullets": ["Old market insight A", "Old market insight B"]},
+        {"title": "Temporary Slide", "bullets": ["To remove"]},
+    ], prefer_native=True)
+    assert os.path.exists(pptx_in)
+
+    res = edit_pptx(pptx_in, operations=[
+        {"op": "replace_text", "find": "Original bullet 1", "replace": "Updated bullet 1"},
+        {"op": "replace_text", "find": "CONFIDENTIAL", "replace": "PUBLIC"},
+        {"op": "set_slide_title", "target_title": "Market Analysis", "title": "Global Market Strategy"},
+        {"op": "set_slide_title", "slide_index": 0, "title": "Final Pitch Deck 2026"},
+        {"op": "append_bullets", "slide_index": 1, "bullets": ["New insight C", "New insight D"]},
+        {"op": "delete_slide", "slide_index": 2},
+        {"op": "add_slide", "layout": "title_and_content", "title": "Next Steps", "bullets": ["Execution plan", "Milestone 1"]},
+        {"op": "add_slide", "layout": "blank"},
+        {"op": "set_notes", "slide_index": 0, "notes": "Remember to introduce partners."},
+    ], output_path=pptx_out)
+
+    assert res["status"] == "ok"
+    assert res["fidelity"] == "high"
+    assert res["operations"] == 9
+    assert res["operations_applied"] == 9
+    assert os.path.exists(res["path"])
+    assert res["bytes"] > 3000
+    assert open(res["path"], "rb").read(2) == b"PK"
+
+    prs = Presentation(res["path"])
+    assert len(prs.slides) == 4  # 3 - 1 (deleted) + 2 (added) = 4
+
+    # Slide 0 checks
+    s0 = prs.slides[0]
+    s0_texts = [p.text for sh in s0.shapes if sh.has_text_frame for p in sh.text_frame.paragraphs if p.text]
+    assert "Final Pitch Deck 2026" in s0_texts
+    assert "PUBLIC" in s0_texts
+    assert any("Updated bullet 1" in t for t in s0_texts)
+    assert not any("Original bullet 1" in t for t in s0_texts)
+    assert s0.has_notes_slide
+    assert "Remember to introduce partners." in s0.notes_slide.notes_text_frame.text
+
+    # Slide 1 checks
+    s1 = prs.slides[1]
+    s1_texts = [p.text for sh in s1.shapes if sh.has_text_frame for p in sh.text_frame.paragraphs if p.text]
+    assert "Global Market Strategy" in s1_texts
+    assert any("New insight C" in t for t in s1_texts)
+    assert any("New insight D" in t for t in s1_texts)
+
+    # Slide 2 checks (was Temporary Slide, deleted; now Next Steps)
+    s2 = prs.slides[2]
+    s2_texts = [p.text for sh in s2.shapes if sh.has_text_frame for p in sh.text_frame.paragraphs if p.text]
+    assert not any("Temporary Slide" in t for s in prs.slides for sh in s.shapes if sh.has_text_frame for p in sh.text_frame.paragraphs for t in [p.text])
+    assert any("Next Steps" in t for t in s2_texts)
+    assert any("Execution plan" in t for t in s2_texts)
+
+
+def test_edit_pptx_in_place_and_fidelity(tmp_path):
+    from pptx import Presentation
+
+    pptx_file = str(tmp_path / "inplace_deck.pptx")
+    create_pptx(pptx_file, slides=[
+        {"title": "Deck A", "bullets": ["Point 1"]}
+    ], prefer_native=True)
+
+    # In-place edit with one valid op and one invalid op to test partial fidelity
+    res = edit_pptx(pptx_file, operations=[
+        {"op": "replace_text", "find": "Point 1", "replace": "Point 1 Modified"},
+        {"op": "unknown_action_xyz", "data": 123},
+    ])
+
+    assert res["status"] == "ok"
+    assert res["fidelity"] == "partial"
+    assert len(res["warnings"]) > 0
+    assert res["path"] == os.path.abspath(pptx_file)
+    assert res["operations_applied"] == 1
+
+    prs = Presentation(pptx_file)
+    texts = [p.text for sh in prs.slides[0].shapes if sh.has_text_frame for p in sh.text_frame.paragraphs if p.text]
+    assert any("Point 1 Modified" in t for t in texts)
 
 
 def test_read_pdf_extract_images(tmp_path):

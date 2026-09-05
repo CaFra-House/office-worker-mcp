@@ -596,3 +596,464 @@ def create_pptx(out_path, slides=None, theme=None, prefer_native: bool = False):
     if not os.path.exists(result) or os.path.getsize(result) < 3000:
         raise RuntimeError(f"PPTX generado inválido o vacío ({result})")
     return os.path.abspath(result)
+
+
+def _iter_all_shapes(shapes):
+    """Recursively yields all shapes, including shapes inside group shapes."""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    for shape in shapes:
+        yield shape
+        if hasattr(shape, "shape_type") and shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            yield from _iter_all_shapes(shape.shapes)
+
+
+def _replace_in_text_frame(tf, old: str, new: str, count_left: int) -> tuple[int, int]:
+    """Replaces occurrences of old with new in a text frame.
+    Returns (count_left, num_replacements_made). Preserves run formatting when possible.
+    """
+    if not old or count_left == 0:
+        return count_left, 0
+    num_done = 0
+    for p in tf.paragraphs:
+        if old not in p.text:
+            continue
+        replaced_in_run = False
+        for r in p.runs:
+            if old in r.text:
+                if count_left == -1:
+                    occ = r.text.count(old)
+                    r.text = r.text.replace(old, new)
+                    num_done += occ
+                    replaced_in_run = True
+                else:
+                    occ = r.text.count(old)
+                    to_rep = min(occ, count_left)
+                    r.text = r.text.replace(old, new, to_rep)
+                    count_left -= to_rep
+                    num_done += to_rep
+                    replaced_in_run = True
+                    if count_left <= 0:
+                        break
+        if not replaced_in_run and old in p.text:
+            if count_left == -1:
+                occ = p.text.count(old)
+                p.text = p.text.replace(old, new)
+                num_done += occ
+            else:
+                occ = p.text.count(old)
+                to_rep = min(occ, count_left)
+                p.text = p.text.replace(old, new, to_rep)
+                count_left -= to_rep
+                num_done += to_rep
+        if count_left == 0:
+            break
+    return count_left, num_done
+
+
+def _replace_in_slide(slide, old: str, new: str, count_left: int) -> tuple[int, int]:
+    total_done = 0
+    for shape in _iter_all_shapes(slide.shapes):
+        if shape.has_text_frame:
+            count_left, done = _replace_in_text_frame(shape.text_frame, old, new, count_left)
+            total_done += done
+            if count_left == 0:
+                break
+        if shape.has_table:
+            for row in shape.table.rows:
+                for cell in row.cells:
+                    if cell.text_frame:
+                        count_left, done = _replace_in_text_frame(cell.text_frame, old, new, count_left)
+                        total_done += done
+                        if count_left == 0:
+                            break
+                if count_left == 0:
+                    break
+        if count_left == 0:
+            break
+    if count_left != 0 and slide.has_notes_slide:
+        count_left, done = _replace_in_text_frame(slide.notes_slide.notes_text_frame, old, new, count_left)
+        total_done += done
+    return count_left, total_done
+
+
+def edit_pptx(
+    input_path: str,
+    operations: list[dict[str, Any]] | str,
+    output_path: str | None = None,
+) -> dict[str, Any]:
+    """Modifica una presentación PowerPoint existente (.pptx) in-place o hacia un nuevo archivo vía python-pptx,
+    preservando temas, estilos, gráficos y diapositivas existentes.
+
+    Operaciones soportadas (lista de dicts):
+    - {"op": "replace_text", "find"|"old": str, "replace"|"new": str, "slide_index"?: int, "count"?: int}
+    - {"op": "set_slide_title", "title"|"new_title": str, "slide_index"?: int, "target_title"?: str}
+    - {"op": "add_slide", "layout"?: "title_and_content"|"blank", "title"?: str, "bullets"?: list[str]}
+    - {"op": "delete_slide", "slide_index"|"index": int}
+    - {"op": "append_bullets", "bullets"|"items": list[str], "slide_index"?: int, "shape_index"?: int}
+    - {"op": "set_notes", "notes"|"text": str, "slide_index"?: int}
+
+    Devuelve dict con status ("ok"), path, bytes, fidelity ("high"|"partial"), warnings y operations.
+    """
+    import json
+    from .security import safe_out
+    from pptx import Presentation
+
+    input_path = os.path.abspath(os.path.expanduser(str(input_path)))
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(f"Archivo PPTX no encontrado: {input_path}")
+
+    target_out = safe_out(output_path if output_path else input_path)
+    prs = Presentation(input_path)
+
+    warnings: list[str] = []
+    fidelity = "high"
+
+    if isinstance(operations, str):
+        try:
+            ops = json.loads(operations)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"operations inválido (JSON malformado): {exc}")
+    else:
+        ops = list(operations or [])
+
+    applied_count = 0
+
+    for i, op in enumerate(ops):
+        op_name = str(op.get("op") or op.get("operation") or op.get("action") or "").lower().strip()
+
+        try:
+            if op_name in ("replace_text", "replace", "text_replace"):
+                old = str(op.get("find") if op.get("find") is not None else op.get("old", ""))
+                new = str(op.get("replace") if op.get("replace") is not None else op.get("new", ""))
+                if not old:
+                    warnings.append(f"Op {i} (replace_text): missing 'find' or 'old' parameter.")
+                    continue
+                raw_count = op.get("count")
+                count_left = int(raw_count) if raw_count is not None else -1
+
+                slide_target = op.get("slide_index") if op.get("slide_index") is not None else op.get("slide_idx", op.get("slide"))
+                if slide_target is not None:
+                    s_idx = int(slide_target)
+                    if s_idx < 0:
+                        s_idx = len(prs.slides) + s_idx
+                    if 0 <= s_idx < len(prs.slides):
+                        target_slides = [prs.slides[s_idx]]
+                    else:
+                        warnings.append(f"Op {i} (replace_text): slide_index {slide_target} out of range.")
+                        fidelity = "partial"
+                        continue
+                else:
+                    target_slides = list(prs.slides)
+
+                total_replacements = 0
+                for s in target_slides:
+                    count_left, done = _replace_in_slide(s, old, new, count_left)
+                    total_replacements += done
+                    if count_left == 0:
+                        break
+                applied_count += 1
+
+            elif op_name in ("set_slide_title", "slide_title", "set_title"):
+                new_title = str(op.get("title") if op.get("title") is not None else op.get("new_title", op.get("text", "")))
+                target_idx = op.get("slide_index") if op.get("slide_index") is not None else op.get("slide_idx", op.get("slide"))
+                target_title = op.get("target_title") or op.get("old_title") or op.get("find_title") or op.get("current_title")
+
+                matched_slide = None
+                target_p = None
+
+                if target_title:
+                    target_clean = str(target_title).strip().lower()
+                    for s in prs.slides:
+                        if s.shapes.title and target_clean in s.shapes.title.text.strip().lower():
+                            matched_slide = s
+                            break
+                        for sh in s.shapes:
+                            if sh.has_text_frame:
+                                for p in sh.text_frame.paragraphs:
+                                    if target_clean in p.text.strip().lower():
+                                        matched_slide = s
+                                        target_p = p
+                                        break
+                            if matched_slide:
+                                break
+                        if matched_slide:
+                            break
+                    if not matched_slide:
+                        warnings.append(f"Op {i} (set_slide_title): slide with title matching '{target_title}' not found.")
+                        fidelity = "partial"
+                        continue
+                else:
+                    s_idx = int(target_idx if target_idx is not None else 0)
+                    if s_idx < 0:
+                        s_idx = len(prs.slides) + s_idx
+                    if not (0 <= s_idx < len(prs.slides)):
+                        warnings.append(f"Op {i} (set_slide_title): slide_index {target_idx} out of range.")
+                        fidelity = "partial"
+                        continue
+                    matched_slide = prs.slides[s_idx]
+
+                if matched_slide.shapes.title and matched_slide.shapes.title.has_text_frame:
+                    tf = matched_slide.shapes.title.text_frame
+                    if tf.paragraphs and tf.paragraphs[0].runs:
+                        tf.paragraphs[0].runs[0].text = new_title
+                        for r in tf.paragraphs[0].runs[1:]:
+                            r.text = ""
+                    else:
+                        tf.text = new_title
+                elif target_p is not None:
+                    if target_p.runs:
+                        target_p.runs[0].text = new_title
+                        for r in target_p.runs[1:]:
+                            r.text = ""
+                    else:
+                        target_p.text = new_title
+                else:
+                    candidate_p = None
+                    max_font_size = 0.0
+                    for sh in matched_slide.shapes:
+                        if sh.has_text_frame:
+                            for p in sh.text_frame.paragraphs:
+                                txt = p.text.strip()
+                                if not txt:
+                                    continue
+                                sz = 0.0
+                                if p.font and p.font.size:
+                                    sz = float(p.font.size.pt)
+                                elif p.runs and p.runs[0].font.size:
+                                    sz = float(p.runs[0].font.size.pt)
+                                if sz > max_font_size:
+                                    max_font_size = sz
+                                    candidate_p = p
+                                elif candidate_p is None:
+                                    candidate_p = p
+                    if candidate_p is not None:
+                        if candidate_p.runs:
+                            candidate_p.runs[0].text = new_title
+                            for r in candidate_p.runs[1:]:
+                                r.text = ""
+                        else:
+                            candidate_p.text = new_title
+                    else:
+                        from pptx.util import Inches, Pt
+                        tb = matched_slide.shapes.add_textbox(Inches(1.0), Inches(0.6), Inches(11.333), Inches(1.2))
+                        p = tb.text_frame.paragraphs[0]
+                        p.text = new_title
+                        p.font.size = Pt(30)
+                        p.font.bold = True
+                applied_count += 1
+
+            elif op_name in ("add_slide", "new_slide", "insert_slide"):
+                from pptx.util import Inches, Pt
+                from pptx.enum.shapes import PP_PLACEHOLDER
+
+                layout_spec = str(op.get("layout", "title_and_content")).lower().strip()
+                title = op.get("title")
+                bullets = op.get("bullets") or op.get("items") or []
+                if isinstance(bullets, str):
+                    bullets = [bullets]
+
+                selected_layout = None
+                if layout_spec in ("blank", "empty"):
+                    for lyt in prs.slide_layouts:
+                        if "blank" in lyt.name.lower():
+                            selected_layout = lyt
+                            break
+                    if selected_layout is None:
+                        selected_layout = prs.slide_layouts[min(6, len(prs.slide_layouts) - 1)]
+                else:
+                    for lyt in prs.slide_layouts:
+                        if "title and content" in lyt.name.lower() or "title & content" in lyt.name.lower():
+                            selected_layout = lyt
+                            break
+                    if selected_layout is None:
+                        for lyt in prs.slide_layouts:
+                            types = [ph.type for ph in lyt.placeholders]
+                            if any(t in (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT) for t in types):
+                                selected_layout = lyt
+                                break
+                    if selected_layout is None:
+                        selected_layout = prs.slide_layouts[min(1, len(prs.slide_layouts) - 1)]
+
+                new_s = prs.slides.add_slide(selected_layout)
+
+                if title is not None:
+                    if new_s.shapes.title and new_s.shapes.title.has_text_frame:
+                        new_s.shapes.title.text = str(title)
+                    else:
+                        tb = new_s.shapes.add_textbox(Inches(1.0), Inches(0.6), Inches(11.333), Inches(1.2))
+                        p = tb.text_frame.paragraphs[0]
+                        p.text = str(title)
+                        p.font.size = Pt(30)
+                        p.font.bold = True
+
+                if bullets:
+                    content_shape = None
+                    for ph in new_s.placeholders:
+                        if ph == new_s.shapes.title:
+                            continue
+                        content_shape = ph
+                        break
+
+                    if content_shape and content_shape.has_text_frame:
+                        tf = content_shape.text_frame
+                        for idx_b, b in enumerate(bullets):
+                            p = tf.paragraphs[0] if (idx_b == 0 and not tf.paragraphs[0].text) else tf.add_paragraph()
+                            p.text = str(b)
+                            p.level = 0
+                    else:
+                        top_pos = Inches(2.2) if title else Inches(1.0)
+                        tb = new_s.shapes.add_textbox(Inches(1.0), top_pos, Inches(11.333), Inches(4.5))
+                        tf = tb.text_frame
+                        tf.word_wrap = True
+                        for idx_b, b in enumerate(bullets):
+                            p = tf.paragraphs[0] if idx_b == 0 else tf.add_paragraph()
+                            p.text = str(b)
+                            p.level = 0
+                applied_count += 1
+
+            elif op_name in ("delete_slide", "remove_slide", "del_slide"):
+                index = op.get("slide_index") if op.get("slide_index") is not None else op.get("index", op.get("slide"))
+                if index is None:
+                    warnings.append(f"Op {i} (delete_slide): missing 'slide_index' parameter.")
+                    fidelity = "partial"
+                    continue
+                idx = int(index)
+                if idx < 0:
+                    idx = len(prs.slides) + idx
+                if not (0 <= idx < len(prs.slides)):
+                    warnings.append(f"Op {i} (delete_slide): slide_index {index} out of range.")
+                    fidelity = "partial"
+                    continue
+                r_id = prs.slides._sldIdLst[idx].rId
+                prs.part.drop_rel(r_id)
+                del prs.slides._sldIdLst[idx]
+                applied_count += 1
+
+            elif op_name in ("append_bullets", "add_bullets", "append_bullet"):
+                bullets = op.get("bullets") or op.get("items") or []
+                if isinstance(bullets, str):
+                    bullets = [bullets]
+                if not bullets:
+                    warnings.append(f"Op {i} (append_bullets): missing 'bullets' or 'items' parameter.")
+                    continue
+
+                target_idx = op.get("slide_index") if op.get("slide_index") is not None else op.get("slide_idx", op.get("slide", 0))
+                s_idx = int(target_idx)
+                if s_idx < 0:
+                    s_idx = len(prs.slides) + s_idx
+                if not (0 <= s_idx < len(prs.slides)):
+                    warnings.append(f"Op {i} (append_bullets): slide_index {target_idx} out of range.")
+                    fidelity = "partial"
+                    continue
+
+                slide = prs.slides[s_idx]
+                content_tf = None
+                shape_idx = op.get("shape_index")
+                if shape_idx is not None and 0 <= int(shape_idx) < len(slide.shapes):
+                    target_sh = slide.shapes[int(shape_idx)]
+                    if target_sh.has_text_frame:
+                        content_tf = target_sh.text_frame
+
+                if content_tf is None:
+                    for ph in slide.placeholders:
+                        if ph == slide.shapes.title:
+                            continue
+                        if ph.has_text_frame:
+                            content_tf = ph.text_frame
+                            break
+
+                if content_tf is None:
+                    for sh in slide.shapes:
+                        if sh == slide.shapes.title:
+                            continue
+                        if sh.has_text_frame:
+                            for p in sh.text_frame.paragraphs:
+                                if "▪" in p.text or "•" in p.text:
+                                    content_tf = sh.text_frame
+                                    break
+                            if content_tf:
+                                break
+
+                if content_tf is None:
+                    for sh in slide.shapes:
+                        if sh != slide.shapes.title and sh.has_text_frame:
+                            content_tf = sh.text_frame
+                            break
+
+                if content_tf is None:
+                    from pptx.util import Inches
+                    tb = slide.shapes.add_textbox(Inches(1.0), Inches(2.2), Inches(11.333), Inches(4.5))
+                    content_tf = tb.text_frame
+                    content_tf.word_wrap = True
+
+                has_sym_run = False
+                ref_sym_font = None
+                ref_txt_font = None
+                if content_tf.paragraphs:
+                    last_p = content_tf.paragraphs[-1]
+                    if last_p.runs and len(last_p.runs) >= 2 and ("▪" in last_p.runs[0].text or "•" in last_p.runs[0].text):
+                        has_sym_run = True
+                        ref_sym_font = last_p.runs[0].font
+                        ref_txt_font = last_p.runs[1].font
+                    elif last_p.runs:
+                        ref_txt_font = last_p.runs[0].font
+
+                for b in bullets:
+                    p = content_tf.add_paragraph()
+                    if has_sym_run and ref_sym_font:
+                        r_sym = p.add_run()
+                        r_sym.text = "▪  "
+                        if ref_sym_font.size: r_sym.font.size = ref_sym_font.size
+                        if ref_sym_font.bold is not None: r_sym.font.bold = ref_sym_font.bold
+                        if ref_sym_font.color and ref_sym_font.color.rgb: r_sym.font.color.rgb = ref_sym_font.color.rgb
+                        if ref_sym_font.name: r_sym.font.name = ref_sym_font.name
+
+                        r_txt = p.add_run()
+                        r_txt.text = str(b)
+                        if ref_txt_font:
+                            if ref_txt_font.size: r_txt.font.size = ref_txt_font.size
+                            if ref_txt_font.color and ref_txt_font.color.rgb: r_txt.font.color.rgb = ref_txt_font.color.rgb
+                            if ref_txt_font.name: r_txt.font.name = ref_txt_font.name
+                    else:
+                        p.text = str(b)
+                        p.level = 0
+                        if ref_txt_font and p.runs:
+                            if ref_txt_font.size: p.runs[0].font.size = ref_txt_font.size
+                            if ref_txt_font.color and ref_txt_font.color.rgb: p.runs[0].font.color.rgb = ref_txt_font.color.rgb
+                            if ref_txt_font.name: p.runs[0].font.name = ref_txt_font.name
+                applied_count += 1
+
+            elif op_name in ("set_notes", "speaker_notes", "notes", "add_notes"):
+                target_idx = op.get("slide_index") if op.get("slide_index") is not None else op.get("slide_idx", op.get("slide", 0))
+                notes_text = str(op.get("notes") if op.get("notes") is not None else op.get("text", ""))
+                s_idx = int(target_idx)
+                if s_idx < 0:
+                    s_idx = len(prs.slides) + s_idx
+                if not (0 <= s_idx < len(prs.slides)):
+                    warnings.append(f"Op {i} (set_notes): slide_index {target_idx} out of range.")
+                    fidelity = "partial"
+                    continue
+                slide = prs.slides[s_idx]
+                slide.notes_slide.notes_text_frame.text = notes_text
+                applied_count += 1
+
+            else:
+                warnings.append(f"Op {i}: Operación de edición PPTX no soportada: '{op_name}'")
+                fidelity = "partial"
+
+        except Exception as exc:
+            warnings.append(f"Op {i} ('{op_name}') falló: {exc}")
+            fidelity = "partial"
+
+    prs.save(target_out)
+    return {
+        "status": "ok",
+        "path": os.path.abspath(target_out),
+        "bytes": os.path.getsize(target_out),
+        "fidelity": fidelity,
+        "warnings": warnings,
+        "operations": len(ops),
+        "operations_applied": applied_count,
+        "slides_count": len(prs.slides),
+    }
+
