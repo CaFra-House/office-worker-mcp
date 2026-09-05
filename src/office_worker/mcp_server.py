@@ -710,6 +710,12 @@ def office_batch(
 
 
 def main():
+    # Startup capability warning → stderr ONLY (stdout is the JSON-RPC channel).
+    try:
+        from office_worker.core.setup_notice import print_setup_notice_if_needed
+        print_setup_notice_if_needed()
+    except Exception:
+        pass  # never break the MCP handshake over a cosmetic warning
     mcp.run()
 
 

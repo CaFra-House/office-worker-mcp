@@ -9,6 +9,14 @@
 
 <!-- mcp-name: io.github.CaFra-House/office-worker-mcp -->
 
+## Requirements (read this first)
+
+| Platform | Path to all 30 tools |
+|----------|----------------------|
+| **Any OS with Docker** (incl. Windows, no WSL2) | Official image — recommended: see [Full setup](#full-setup--all-30-tools-zero-friction-recommended) below or [docs/docker.md](docs/docker.md) |
+| **Linux / macOS (bare metal)** | `pip install office-worker-mcp` + system binaries for the 3 capabilities pip can't ship (LibreOffice → Office→PDF, Tesseract → OCR, Pango/Cairo → WeasyPrint). Run `owi doctor` once: it prints the exact one-line install command for your OS. The server also warns you at startup if anything is missing. |
+| **Windows (bare metal)** | Not supported directly (WeasyPrint needs native C libs with no unattended installer). Use the Docker image or WSL2. Details: [docs/extras.md](docs/extras.md) |
+
 ```bash
 pip install office-worker-mcp          # core: MCP server + CLI 'owi'
 ```
@@ -18,6 +26,27 @@ Connect it to your agent (stdio):
 ```json
 { "mcpServers": { "office-worker": { "command": "office-worker-mcp" } } }
 ```
+
+## Full setup — all 30 tools, zero friction (recommended)
+
+The core pip package covers the full document lifecycle; three capabilities need system binaries that `pip` cannot ship (LibreOffice for Office→PDF conversion, Tesseract for OCR, Pango/Cairo native libs for WeasyPrint). The official Docker image bundles **everything** and runs on any OS with Docker — including Windows, no WSL2 needed:
+
+```bash
+docker pull ghcr.io/cafra-house/office-worker-mcp:latest
+```
+
+```json
+{
+  "mcpServers": {
+    "office-worker": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-v", "${HOME}/office-worker-data:/data", "ghcr.io/cafra-house/office-worker-mcp:latest"]
+    }
+  }
+}
+```
+
+Prefer bare metal? Run `owi doctor` after `pip install` — it reports exactly which capability is inactive and prints the one-line install command for your OS (apt/brew/dnf/winget). Details in [docs/docker.md](docs/docker.md) and [docs/extras.md](docs/extras.md).
 
 ## See it in action
 
@@ -46,13 +75,13 @@ One package covers the entire document lifecycle — create → read → extract
 
 ### Efficiency (measured)
 
-~2550 tokens/turn across 29 specialized tools vs ~6400 for a typical 47-tool CRUD suite — less bloat, more stable agents, lower cost. Measured, not claimed.
+~2550 tokens/turn across 30 specialized tools vs ~6400 for a typical 47-tool CRUD suite — less bloat, more stable agents, lower cost. Measured, not claimed.
 
 ## Documentation
 
 | Topic | Where |
 |---|---|
-| Full reference of all 29 tools (returns / use when / do-not-use) | [docs/tools.md](docs/tools.md) |
+| Full reference of all 30 tools (returns / use when / do-not-use) | [docs/tools.md](docs/tools.md) |
 | Competitive comparison & why we're the one to install | [docs/comparison.md](docs/comparison.md) |
 | Ten end-to-end conversational workflows (EN) | [docs/workflows.md](docs/workflows.md) |
 | Optional extras ([ocr] [sign] [book] [pptx]) & honest platform limits | [docs/extras.md](docs/extras.md) |

@@ -1,6 +1,6 @@
 # Tool Reference - The Office Worker
 
-Complete reference for all **29 tools**. Each row states what the tool returns, when to use it, and when NOT to use it. This deep reference lives out of the main README on purpose - the front page stays a short landing page.
+Complete reference for all **30 tools**. Each row states what the tool returns, when to use it, and when NOT to use it. This deep reference lives out of the main README on purpose - the front page stays a short landing page.
 
 | Tool | Returns | Use when | Do NOT use when |
 |---|---|---|---|

@@ -21,7 +21,7 @@ pip install "office-worker-mcp[pptx]"   # native PowerPoint charts via Playwrigh
 
 For full transparency about what the tools do and do not guarantee:
 
-- **Windows is excluded from the CI matrix.** WeasyPrint needs natively compiled C libraries (`libpango`, `libpangocairo`, `libgdk-pixbuf`, `libffi`) with no official unattended Windows installer, and LibreOffice headless requires registry-path binaries. On Windows, run under **WSL2 (Ubuntu)** or a **Linux Docker container**.
+- **Windows is excluded from the CI matrix.** WeasyPrint needs natively compiled C libraries (`libpango`, `libpangocairo`, `libgdk-pixbuf`, `libffi`) with no official unattended Windows installer, and LibreOffice headless requires registry-path binaries. On Windows, use the **official multi-arch Docker image** (`ghcr.io/cafra-house/office-worker-mcp`, amd64 + arm64 — see [docker.md](docker.md)) or run under **WSL2 (Ubuntu)**.
 - **LibreOffice headless font substitution.** Converting to PDF may substitute fonts if exact corporate typefaces are not installed on the host. Wide spreadsheets without a fixed print area can get automatic page breaks - always reported in `warnings`.
 - **VBA macros are preserved but NOT executed.** `openpyxl` keeps `.xlsm` macros safely via `keep_vba=True`; no VBA code is ever run.
 - **`sign_pdf` without a certificate stamps only the visible PNG seal** - it does not embed a cryptographic signature. In that case `verify_pdf_signature` honestly reports `has_signature: false`, `valid: false`. Pass `cert_pem` or set `auto_generate_test_cert=true` for a real verifiable PAdES signature.

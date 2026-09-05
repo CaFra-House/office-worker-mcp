@@ -20,7 +20,7 @@ We are a **new project**, so we don't compete on star count - we compete on the 
 1. **The only full-lifecycle enterprise + local + portable package.** Create -> read -> extract structured (MD/JSON) -> convert <-> -> secure (redact / scrub_metadata / protect_office / flatten) -> batch -> sign (real PAdES) -> audit (document_diff / verify_pdf_signature) -> pivot/charts/books - in one multiplatform local package. No single competitor spans all of it.
 2. **Truly cross-platform vs OfficeMCP.** The #3 by stars runs Windows-only and is ~1 year stale. We ship green CI on Linux + Mac, proven on ARM64.
 3. **Security-first vs arbitrary-code rivals.** OfficeMCP exposes `RunPython(codes)` = arbitrary code execution. We use deterministic `office_batch` + `safe_out`, no free code path - a strong argument for enterprise adoption.
-4. **Measured context efficiency.** ~2550 tok/turn across 29 specialized tools vs ~6400 for a 47-tool CRUD suite. Less bloat = more stable agents and lower cost. This is measured, not claimed.
+4. **Measured context efficiency.** ~2550 tok/turn across 30 specialized tools vs ~6400 for a 47-tool CRUD suite. Less bloat = more stable agents and lower cost. This is measured, not claimed.
 5. **Honest fidelity + proactive guidance.** Only mcp-docgen reports honest fidelity; we add `next_steps` (orients the agent to the next logical action) and `owi doctor` (assisted onboarding). That puts us ahead even of the closest design rival in agent UX.
 6. **Zero API keys / privacy-local as a flag.** Data sovereignty is explicit, not an afterthought - documents never leave your machine.
 

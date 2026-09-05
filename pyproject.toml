@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "office-worker-mcp"
-version = "0.9.5"
+version = "0.9.6"
 description = "The Office Worker — your agent's document clerk: Word, Excel, PowerPoint & PDF with real design (templates + themes + PDF input)."
 readme = "README.md"
 requires-python = ">=3.9"

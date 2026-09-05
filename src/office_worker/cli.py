@@ -13,6 +13,8 @@ def _print(r): print(json.dumps(r, ensure_ascii=False))
 
 
 def main(argv=None):
+    from office_worker.core.setup_notice import print_setup_notice_if_needed
+    print_setup_notice_if_needed()  # stderr only; stdout stays clean for JSON output
     p = argparse.ArgumentParser(prog="owi", description="The Office Worker — CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
 

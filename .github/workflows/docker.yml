@@ -1,0 +1,65 @@
+name: Publish Docker image
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Permissions configuration for GitHub Container Registry (GHCR):
+# GITHUB_TOKEN requires 'packages: write' to push container images to GHCR
+# and 'contents: read' to checkout the repository code.
+#
+# NOTE ON REPOSITORY PERMISSIONS:
+# If the workflow fails with 403 Forbidden when pushing to ghcr.io:
+# 1. Go to Repository Settings -> Actions -> General -> Workflow permissions:
+#    Select "Read and write permissions" (or ensure GITHUB_TOKEN can write packages).
+# 2. If under an Organization, ensure Organization Settings -> Packages allows actions to publish packages.
+# 3. Once published, navigate to Package Settings for 'office-worker-mcp' in GHCR
+#    and change package visibility from "Private" to "Public" if open public access is desired.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build & Push to GHCR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
