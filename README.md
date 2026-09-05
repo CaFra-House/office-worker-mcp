@@ -60,7 +60,9 @@ create_excel("balance.xlsx", title="Balance", sheets=[{"name":"Resumen",
 ## Requisitos locales
 
 - Python ≥ 3.9 · WeasyPrint (necesita fontconfig/pango en Linux) · LibreOffice opcional.
-- Para PPTX: Playwright + Chromium (`playwright install chromium`). Todo corre en local; sin cloud.
+- **PPTX editable** (opcional): `pip install office-worker-mcp[pptx]` + `playwright install chromium`.
+  Sin este extra, las tools de PDF/Word/Excel funcionan igual; solo `create_pptx` queda deshabilitada.
+- Todo corre en local; sin cloud.
 
 ## Desarrollo & tests
 

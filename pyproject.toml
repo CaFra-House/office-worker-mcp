@@ -28,8 +28,11 @@ dependencies = [
     "pypdf>=4",
 ]
 
+# PPTX editable requiere html-to-pptx + Playwright/Chromium (pesado, con navegador).
+# Se declara como extra opcional para no forzar Chromium a quien solo usa PDF/Word/Excel.
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+pptx = ["html-to-pptx>=0.3", "playwright>=1.40"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "html-to-pptx>=0.3", "playwright>=1.40"]
 
 [project.scripts]
 # Cara CLI (opcional) para no-tecnicos/scripts; el MCP es la cara principal para agentes IA.
