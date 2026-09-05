@@ -1,0 +1,35 @@
+# Tool Reference - The Office Worker
+
+Complete reference for all **29 tools**. Each row states what the tool returns, when to use it, and when NOT to use it. This deep reference lives out of the main README on purpose - the front page stays a short landing page.
+
+| Tool | Returns | Use when | Do NOT use when |
+|---|---|---|---|
+| `create_book` | JSON `{status, path, bytes, chapters_count, epub_path?, next_steps}` | Compile multi-chapter books/manuals to PDF (cover + auto-numbered TOC) and optional EPUB | Not for short 1-2 page documents |
+| `environment_status` | JSON `{status, os, package_manager, core_ready, all_ready, capabilities}` | Audit system capabilities (LibreOffice, WeasyPrint, PyMuPDF...) and get exact per-OS install hints | Not for generating or manipulating documents |
+| `document_diff` | JSON `{status, summary, diffs, warnings}` | Compare two Word (.docx) or PDF docs and get paragraph-level differences with honest warnings | Not for legal-grade semantic redlines or pixel diffs |
+| `scrub_metadata` | JSON `{status, path, bytes, scrubbed_fields}` | Remove author, revision history, editors and personal properties from PDF/Word/Excel/PPTX before external sharing | Not to censor visible page text (use pdf_redact) |
+| `protect_office` | JSON `{status, path, bytes, encrypted}` | Encrypt/password-protect Office files (.docx/.xlsx/.pptx) with standard AES encryption | Not for PDFs (use render_document or pdf_manipulate) |
+| `verify_pdf_signature` | JSON `{status, has_signature, valid, signer, date, warnings}` | Cryptographically verify integrity and validity of digital signatures in PDFs (pyhanko/pypdf/PyMuPDF multi-engine) | Not to sign documents (use sign_pdf) |
+| `mail_merge` | JSON `{status, template, n_docs, paths, fields}` | Generate N personalized .docx from a docxtpl template + CSV/JSON dataset with automatic naming and column filtering | Not for single one-off documents (use create_word) |
+| `csv_excel_convert` | JSON `{status, path, bytes, n_rows, fidelity, warnings}` | Convert bidirectionally between CSV and structured Excel (.xlsx <-> CSV) with type-preservation warnings | Not to edit existing spreadsheets (use edit_excel) |
+| `read_office` | JSON `{status, format, content?, paragraphs/slides/sheets}` | Extract text and tables from Word/PPTX/Excel to Markdown (pipes) or JSON for RAG ingestion without converting to PDF first | Not for PDF files (use read_pdf or pdf_extract_structured) |
+| `create_pptx` | JSON `{status, path, bytes}` | Create editable PowerPoint decks with typography, kickers and native DrawingML charts (bar/line/pie) that stay fully editable in PowerPoint/Google Slides | Not for running-text reports in PDF format |
+| `pdf_redact` | JSON `{status, path, bytes, redactions_count}` | Permanently destroy confidential info by text search or explicit rectangular regions - irreversible PII/key removal via PyMuPDF apply_redactions() that physically destroys stream content rather than overlaying black boxes | Not for normal text editing (use edit_word) |
+| `pdf_extract_structured` | JSON `{status, format, content?, pages, n_tables}` | Extract text and tables as Markdown pipes or structured JSON for RAG/knowledge bases using pdfplumber + PyMuPDF | Not on scanned PDFs without a text layer (use pdf_ocr) |
+| `pdf_preview` | JSON `{status, data_url, pages, path?, bytes?}` | Render PDF pages to PNG images at dpi=110 returning base64 data URLs for visual inspection before delivery | Not to extract selectable text (use read_pdf) |
+| `read_pdf` | JSON `{pages, metadata, tables?, fields?, images?}` | All-in-one: text, metadata, tables (extract_tables), forms (list_forms), base64 images (extract_images) for multimodal agents | Not for fully-scanned PDFs needing OCR (use pdf_ocr) |
+| `office_batch` | Resumen JSON `{status, total, succeeded, failed, results}` | Run sequences of document operations in one turn without roundtrips; partial-failure tolerant with per-op results | Not for isolated single-step ops (call the tool directly) |
+| `edit_excel` | JSON `{status, path, bytes, fidelity, warnings}` | Modify cells/rows/columns/tables/charts/pivots in .xlsx/.xlsm in-place preserving original styles and VBA macros | Not to create workbooks from scratch (use create_excel) |
+| `edit_word` | JSON `{status, path, bytes, fidelity, warnings}` | Edit existing .docx in-place preserving styles/VBA macros (~35% smaller than re-creating): append paragraphs, replace text preserving run formatting, insert after headings/add tables | Not to create new documents from scratch (use create_word) |
+| `pdf_to_excel` | JSON `{status, path, bytes, n_tables, fidelity, warnings}` | Extract tables from PDFs (balances, invoices, reports) into clean styled .xlsx sheets with fidelity reporting | Not for scanned PDFs without selectable tables (use pdf_ocr) |
+| `render_document` | JSON `{status, path, bytes}` | Generate polished PDFs from HTML/Jinja templates + corporate theme + design mode (standard|premium) | Not to edit existing documents (use edit_word/pdf_manipulate) |
+| `create_word` | JSON `{status, path, bytes}` | Create new Word .docx from declarative blocks or packaged official templates with corporate themes/logos/watermarks | Not to edit documents already on disk (use edit_word) |
+| `create_excel` | JSON `{status, path, bytes}` | Create multi-sheet Excel .xlsx workbooks with structured tables, autofilter, native charts and pivot tables | Not to update existing workbooks (use edit_excel) |
+| `convert_to_pdf` | JSON `{status, path, bytes, fidelity, warnings}` | Convert Office files (.docx/.xlsx/.pptx) to PDF locally via LibreOffice headless with subprocess isolation | Not when generating a brand-new document from an HTML template |
+| `sign_pdf` | JSON `{status, path, bytes}` | Stamp a visible PNG seal and apply real PAdES cryptographic digital signature with PEM certificate (or auto_generate_test_cert for demos) | Not to edit textual content of a document |
+| `pdf_compress` | JSON `{status, path, bytes, savings_percent}` | Optimize and compress heavy PDFs by reducing images and cleaning objects, returning savings_percent | Not on pure-text PDFs with no images |
+| `pdf_manipulate` | JSON `{status, path/files, bytes, warnings?}` | Merge, extract/split_by, flatten AcroForms, rotate or split_smart detect boundaries heuristically (blank pages/cover pages) | Not to modify text inside the pages |
+| `pdf_fill_form` | JSON `{status, path, bytes}` | Fill interactive AcroForm fields with key-value pairs in one call | Not on flat or scanned PDFs without form fields |
+| `pdf_ocr` | JSON `{status, text, path?}` | Extract text and produce searchable PDF over images/scans using Tesseract | Not on digital PDFs that already have selectable text |
+| `list_templates` | JSON `{status, templates}` | List the catalog of packaged official .docx templates and the variables each requires | Not to generate files (use create_word) |
+| `list_themes` | JSON `{status, theme}` | List corporate theme palettes and fonts available for rendering | Not to generate documents directly |
