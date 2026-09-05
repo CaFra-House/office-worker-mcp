@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "office-worker-mcp"
+version = "0.1.0"
+description = "The Office Worker — your agent's document clerk: Word, Excel, PowerPoint & PDF with real design (templates + themes + PDF input)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Julio Cardozo" }]
+keywords = ["mcp", "office", "pdf", "docx", "xlsx", "pptx", "documents", "agent", "templates"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business",
+]
+dependencies = [
+    "mcp[cli]>=1.27,<2",
+    "python-docx>=1.0",
+    "openpyxl>=3.1",
+    "python-pptx>=1.0",
+    "weasyprint>=60",
+    "jinja2>=3.1",
+    "PyMuPDF>=1.24",
+    "pdfplumber>=0.11",
+    "pypdf>=4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+# Cara CLI (opcional) para no-tecnicos/scripts; el MCP es la cara principal para agentes IA.
+owi = "office_worker.cli:main"
+# Command del MCP server (stdio) — el que va en la config mcpServers del agente.
+office-worker-mcp = "office_worker.mcp_server:main"
+
+[project.entry-points."mcp.servers"]
+office_worker = "office_worker.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

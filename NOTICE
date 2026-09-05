@@ -1,0 +1,13 @@
+# Acknowledgements
+
+`office-worker-mcp` was designed and built independently by Julio Cardozo.
+
+During its development, the following MIT-licensed project was used as a **read-only
+reference** for MCP server structure and tool design patterns (no code was copied
+verbatim; it informed architectural decisions only):
+
+- **gawirable/office-mcp** — https://github.com/gawirable/office-mcp (MIT License)
+
+All other functionality (template engine with variables, corporate theme system,
+PDF-as-input reading/extraction, editable PPTX generation, anti-loop guidance) is
+original work of this repository.
