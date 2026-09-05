@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "office-worker-mcp"
-version = "0.6.0"
+version = "0.8.0"
 description = "The Office Worker — your agent's document clerk: Word, Excel, PowerPoint & PDF with real design (templates + themes + PDF input)."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Julio Cardozo" }]
-keywords = ["mcp", "office", "pdf", "docx", "xlsx", "pptx", "documents", "agent", "templates", "signature", "compression", "batch", "edit", "charts", "preview", "vision", "redact", "rag", "security", "skills", "flatten"]
+keywords = ["mcp", "office", "pdf", "docx", "xlsx", "pptx", "documents", "agent", "templates", "signature", "compression", "batch", "edit", "charts", "preview", "vision", "redact", "rag", "security", "skills", "flatten", "mail-merge", "markdown", "diff", "compliance", "encryption", "verify"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -38,6 +38,8 @@ dependencies = [
     "pdfplumber>=0.11",
     "pypdf>=4",
     "reportlab>=4.0",
+    "pandas>=2.0",
+    "msoffcrypto-tool>=5.4",
 ]
 
 # PPTX editable requiere html-to-pptx + Playwright/Chromium (pesado, con navegador).

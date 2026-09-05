@@ -520,26 +520,30 @@ def sign_pdf(
             from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
             from pyhanko.sign import fields, signers
             from pyhanko.sign.signers import SimpleSigner
+            from .security import run_in_worker_thread_if_async
 
             pass_bytes = passphrase.encode("utf-8") if passphrase else None
             signer = SimpleSigner.load(key_file=key_file, cert_file=cert_file, key_passphrase=pass_bytes)
 
-            with open(tmp_stamped, "rb") as inf:
-                w = IncrementalPdfFileWriter(inf)
-                fields.append_signature_field(
-                    w, sig_field_spec=fields.SigFieldSpec(sig_field_name="Signature1")
-                )
-                with open(out_path, "wb") as outf:
-                    signers.sign_pdf(
-                        w,
-                        signers.PdfSignatureMetadata(
-                            field_name="Signature1",
-                            reason=reason or "Documento aprobado y firmado",
-                            location=location or "",
-                        ),
-                        signer=signer,
-                        output=outf,
+            def _apply_signature():
+                with open(tmp_stamped, "rb") as inf:
+                    w = IncrementalPdfFileWriter(inf)
+                    fields.append_signature_field(
+                        w, sig_field_spec=fields.SigFieldSpec(sig_field_name="Signature1")
                     )
+                    with open(out_path, "wb") as outf:
+                        signers.sign_pdf(
+                            w,
+                            signers.PdfSignatureMetadata(
+                                field_name="Signature1",
+                                reason=reason or "Documento aprobado y firmado",
+                                location=location or "",
+                            ),
+                            signer=signer,
+                            output=outf,
+                        )
+
+            run_in_worker_thread_if_async(_apply_signature)
         finally:
             if os.path.exists(tmp_stamped):
                 try:

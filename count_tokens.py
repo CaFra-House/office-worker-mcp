@@ -108,6 +108,58 @@ V051_BASELINE = {
 }
 V051_TOTAL = 1697.50
 
+V060_BASELINE = {
+    "render_document": 200.25,
+    "create_word": 147.00,
+    "create_excel": 124.75,
+    "create_pptx": 71.00,
+    "read_pdf": 129.50,
+    "pdf_preview": 86.50,
+    "list_themes": 38.75,
+    "pdf_fill_form": 76.00,
+    "pdf_ocr": 86.25,
+    "convert_to_pdf": 53.50,
+    "pdf_manipulate": 137.50,
+    "list_templates": 18.00,
+    "pdf_compress": 70.25,
+    "sign_pdf": 121.25,
+    "edit_excel": 77.25,
+    "edit_word": 77.00,
+    "pdf_to_excel": 93.75,
+    "read_office": 51.00,
+    "pdf_redact": 108.50,
+    "pdf_extract_structured": 74.75,
+    "office_batch": 38.00,
+}
+V060_TOTAL = 1880.75
+
+V070_BASELINE = {
+    "render_document": 200.25,
+    "create_word": 147.00,
+    "mail_merge": 116.00,
+    "create_excel": 124.75,
+    "create_pptx": 71.00,
+    "read_pdf": 129.50,
+    "pdf_preview": 86.50,
+    "list_themes": 38.75,
+    "pdf_fill_form": 76.00,
+    "pdf_ocr": 86.25,
+    "convert_to_pdf": 53.50,
+    "pdf_manipulate": 137.50,
+    "list_templates": 18.00,
+    "pdf_compress": 70.25,
+    "sign_pdf": 121.25,
+    "edit_excel": 77.25,
+    "edit_word": 77.00,
+    "pdf_to_excel": 93.75,
+    "read_office": 67.00,
+    "csv_excel_convert": 83.50,
+    "pdf_redact": 108.50,
+    "pdf_extract_structured": 74.75,
+    "office_batch": 38.00,
+}
+V070_TOTAL = 2096.25
+
 async def main():
     tools = await mcp.list_tools()
     total = 0
@@ -119,24 +171,24 @@ async def main():
         s = json.dumps(schema)
         toks = len(s) / 4
         current_tokens[t.name] = toks
-        base_tok = V051_BASELINE.get(t.name)
+        base_tok = V070_BASELINE.get(t.name)
         if base_tok is not None:
             diff = toks - base_tok
-            diff_str = f"({diff:+.2f} vs v0.5.1)"
+            diff_str = f"({diff:+.2f} vs v0.7.0)"
         else:
-            diff_str = "(nueva tool v0.6.0)"
+            diff_str = "(nueva tool v0.8.0)"
         print(f"  {t.name:24s}: {toks:6.2f} tokens {diff_str}")
         total += toks
 
     print("-" * 65)
-    print(f"Total ({len(tools)} tools registradas v0.6.0) : {total:.2f} tokens")
-    print(f"Línea base (v0.5.1 auditada)        : {V051_TOTAL:.2f} tokens")
-    delta_v051 = total - V051_TOTAL
-    print(f"Delta real vs v0.5.1                : {delta_v051:+.2f} tokens")
-    print(f"Línea base (v0.5.0 auditada)        : {V050_TOTAL:.2f} tokens")
-    delta_v050 = total - V050_TOTAL
-    print(f"Delta real vs v0.5.0                : {delta_v050:+.2f} tokens")
-    print(f"Objetivo <1900 tok v0.6.0           : {'CUMPLIDO (<1900)' if total < 1900 else 'NO CUMPLIDO'}")
+    print(f"Total ({len(tools)} tools registradas v0.8.0) : {total:.2f} tokens")
+    print(f"Línea base (v0.7.0 auditada)        : {V070_TOTAL:.2f} tokens")
+    delta_v070 = total - V070_TOTAL
+    print(f"Delta real vs v0.7.0                : {delta_v070:+.2f} tokens")
+    print(f"Línea base (v0.6.0 auditada)        : {V060_TOTAL:.2f} tokens")
+    delta_v060 = total - V060_TOTAL
+    print(f"Delta real vs v0.6.0                : {delta_v060:+.2f} tokens")
+    print(f"Objetivo <2350 tok v0.8.0           : {'CUMPLIDO (<2350)' if total < 2350 else 'NO CUMPLIDO'}")
 
 if __name__ == "__main__":
     asyncio.run(main())

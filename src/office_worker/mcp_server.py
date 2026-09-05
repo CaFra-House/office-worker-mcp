@@ -14,8 +14,10 @@ from office_worker.core import (
     render_pdf as _render_pdf,
     create_word as _create_word,
     edit_word as _edit_word,
+    mail_merge as _mail_merge,
     create_excel as _create_excel,
     edit_excel as _edit_excel,
+    csv_excel_convert as _csv_excel_convert,
     create_pptx as _create_pptx,
     read_pdf as _read_pdf,
     pdf_preview as _pdf_preview,
@@ -30,6 +32,10 @@ from office_worker.core import (
     pdf_to_excel as _pdf_to_excel,
     read_office as _read_office,
     list_packaged_templates as _list_packaged_templates,
+    document_diff as _document_diff,
+    scrub_metadata as _scrub_metadata,
+    protect_office as _protect_office,
+    verify_pdf_signature as _verify_pdf_signature,
     load_theme, DEFAULT_THEME,
 )
 
@@ -37,7 +43,8 @@ mcp = FastMCP(
     "office-worker",
     instructions=(
         "The Office Worker: generates, edits, and secures professional office documents (PDF, Word/DOCX, Excel/XLSX, PowerPoint/PPTX) "
-        "locally with corporate styling, packaged Word templates (docxtpl), in-place edits, native Excel charts, formulas, "
+        "locally with corporate styling, packaged Word templates (docxtpl), bulk mail merge, in-place edits, native Excel and PowerPoint charts, formulas, "
+        "bidirectional CSV-Excel conversion, Office-to-Markdown/JSON structured extraction, document comparison/diff, metadata scrubbing, password protection, digital signature verification, "
         "batch pipelines, PDF processing (preview PNG, permanent redaction, structured RAG extraction, flattening, smart split, text, tables, forms, OCR, compression, signature), and Office-to-PDF conversion. "
         "Choose the exact tool matching your target document format. "
         "Hard Anti-Loop Rule: if any tool call fails 2 consecutive times, STOP immediately and report the exact error to the user."
@@ -45,8 +52,11 @@ mcp = FastMCP(
 )
 
 
-def _ok(path: str) -> dict:
-    return {"status": "ok", "path": os.path.abspath(path), "bytes": os.path.getsize(path)}
+def _ok(path: str, next_steps: list[str] | None = None) -> dict:
+    d = {"status": "ok", "path": os.path.abspath(path), "bytes": os.path.getsize(path)}
+    if next_steps:
+        d["next_steps"] = next_steps
+    return d
 
 
 @mcp.tool()
@@ -73,18 +83,21 @@ def render_document(
         body = "\n".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in data["rows"])
         data["tabla"] = f"<table><thead><tr>{thead}</tr></thead><tbody>{body}</tbody></table>"
     try:
-        return _ok(_render_pdf(
-            template_html,
-            out_path,
-            data=data,
-            theme=theme or None,
-            logo=logo or None,
-            password=password or None,
-            watermark_text=watermark_text,
-            footer_left=footer_left,
-            footer_right=footer_right,
-            page_numbers=page_numbers,
-        ))
+        return _ok(
+            _render_pdf(
+                template_html,
+                out_path,
+                data=data,
+                theme=theme or None,
+                logo=logo or None,
+                password=password or None,
+                watermark_text=watermark_text,
+                footer_left=footer_left,
+                footer_right=footer_right,
+                page_numbers=page_numbers,
+            ),
+            next_steps=["Preview visual layout with pdf_preview", "Sign document with sign_pdf"],
+        )
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -112,7 +125,40 @@ def create_word(
     else:
         ctx = dict(context or {})
     try:
-        return _ok(_create_word(out_path, title=title, subtitle=subtitle or None, blocks=blocks, theme=theme or None, template_docx=template_docx or None, context=ctx))
+        return _ok(
+            _create_word(out_path, title=title, subtitle=subtitle or None, blocks=blocks, theme=theme or None, template_docx=template_docx or None, context=ctx),
+            next_steps=["Convert to PDF with convert_to_pdf", "Preview rendered document with pdf_preview"],
+        )
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mail_merge(
+    template_path: str,
+    dataset_csv: str = "",
+    dataset_json: str = "",
+    output_prefix: str = "",
+    fields: list = [],
+) -> dict:
+    """Generates N .docx documents from docxtpl template with {{placeholders}} fed by CSV or JSON dataset. Returns JSON with status, n_docs, and paths. When to use: Use for personalized contracts, letters, or reports in bulk. When NOT to use: Do NOT use for single documents (use create_word). Keywords: mail merge, template, dataset, bulk, csv, json, local, safe."""
+    try:
+        f_list = fields
+        if isinstance(fields, str):
+            try:
+                f_list = json.loads(fields or "[]")
+            except Exception:
+                f_list = [f.strip() for f in fields.split(",") if f.strip()]
+        res = _mail_merge(
+            template_path=template_path,
+            dataset_csv=dataset_csv,
+            dataset_json=dataset_json,
+            output_prefix=output_prefix,
+            fields=f_list or None,
+        )
+        if isinstance(res, dict) and res.get("status") == "ok":
+            res["next_steps"] = ["Convert generated documents to PDF with convert_to_pdf", "Preview first generated document with pdf_preview"]
+        return res
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -132,20 +178,26 @@ def create_excel(
     except json.JSONDecodeError as e:
         return {"status": "error", "error": f"sheets_json inválido: {e}"}
     try:
-        return _ok(_create_excel(out_path, title=title, sheets=sheets or None, theme=theme or None, table_style=table_style or None, auto_filter=auto_filter))
+        return _ok(
+            _create_excel(out_path, title=title, sheets=sheets or None, theme=theme or None, table_style=table_style or None, auto_filter=auto_filter),
+            next_steps=["Convert to PDF with convert_to_pdf", "Export or edit with csv_excel_convert or edit_excel"],
+        )
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
 
 @mcp.tool()
 def create_pptx(out_path: str, slides_json: str = "[]", theme: str = "") -> dict:
-    """Creates editable native PowerPoint .pptx presentation (deck, executive summary, status report) from structured slide definitions with corporate theme. Returns JSON with status, absolute file path, and byte size. When to use: Use to generate editable PowerPoint slides with real typography, kicker badges, bullet lists, and tables. When NOT to use: Do NOT use for PDFs (use render_document) or Word documents (use create_word). Keywords: executive summary, report, deck, presentation, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    """Creates editable PowerPoint .pptx presentation (deck, executive summary, status report) with corporate theme and optional native charts (bar, line, pie). Returns JSON with status, absolute file path, and byte size. When to use: Use to generate editable PowerPoint slides with typography, kickers, bullets, tables, and native charts. When NOT to use: Do NOT use for PDFs (use render_document). Keywords: executive summary, report, deck, presentation, chart, local, private, safe."""
     try:
         slides = json.loads(slides_json or "[]") if isinstance(slides_json, str) else (slides_json or [])
     except json.JSONDecodeError as e:
         return {"status": "error", "error": f"slides_json inválido: {e}"}
     try:
-        return _ok(_create_pptx(out_path, slides=slides or None, theme=theme or None))
+        return _ok(
+            _create_pptx(out_path, slides=slides or None, theme=theme or None),
+            next_steps=["Convert to PDF with convert_to_pdf", "Preview slides with pdf_preview"],
+        )
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -248,6 +300,7 @@ def convert_to_pdf(input_file: str, output: str) -> dict:
             fidelity = "lossy"
         res["fidelity"] = fidelity
         res["warnings"] = warnings
+        res["next_steps"] = ["Preview visual layout with pdf_preview", "Sign document with sign_pdf"]
         return res
     except Exception as e:
         return {"status": "error", "error": str(e)}
@@ -313,14 +366,17 @@ def sign_pdf(
 ) -> dict:
     """Signs PDF documents (contract, letter, minutes, invoice): stamps visual PNG signature/seal on target page and applies cryptographic PAdES digital signature if X.509 PEM certificate is provided. Returns JSON with status, signed file path, and byte size. When to use: Use to approve, endorse, or sign official business documents. When NOT to use: Do NOT use for modifying document content (use edit_word or render_document). Keywords: sign, stamp, contract, minutes, letter, invoice, local, private, no api key, offline, cross-platform, deterministic, safe."""
     try:
-        return _ok(_sign_pdf(
-            input_pdf=input_pdf,
-            output=output,
-            sello_img_path=sello_img_path or None,
-            cert_pem=cert_pem or None,
-            reason=reason or None,
-            location=location or None,
-        ))
+        return _ok(
+            _sign_pdf(
+                input_pdf=input_pdf,
+                output=output,
+                sello_img_path=sello_img_path or None,
+                cert_pem=cert_pem or None,
+                reason=reason or None,
+                location=location or None,
+            ),
+            next_steps=["Verify digital signature with verify_pdf_signature", "Preview signed document with pdf_preview"],
+        )
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -369,10 +425,30 @@ def pdf_to_excel(
 def read_office(
     path: str,
     max_rows: int = 500,
+    format: str = "",
 ) -> dict:
-    """Extracts structured text, paragraphs, slides, and tables from Word (.docx), PowerPoint (.pptx), and Excel (.xlsx / .xlsm) files. Returns JSON with format, structured elements (paragraphs, slides, sheets), table contents, and full text. When to use: Use to inspect, search, and extract content from Office documents directly without converting to PDF. When NOT to use: Do NOT use for PDF files (use read_pdf instead). Keywords: read, report, minutes, letter, contract, deck, balance statement, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    """Extracts text, slides, and tables from Word (.docx), PowerPoint (.pptx), and Excel (.xlsx) files in Markdown (format='markdown') or JSON (format='json', default). Returns JSON with format, structured elements, and content. When to use: Use to read or ingest Office files into RAG/LLM context. When NOT to use: Do NOT use for PDF (use read_pdf). Keywords: read, markdown, json, rag, table, local, safe."""
     try:
-        return _read_office(path, max_rows=max_rows)
+        return _read_office(path, max_rows=max_rows, format=format or "json")
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def csv_excel_convert(
+    input: str,
+    output: str,
+    direction: str = "",
+    sheet: str = "",
+) -> dict:
+    """Converts bidirectionally between CSV and structured Excel .xlsx workbooks. Supports single sheet or all sheets. Returns JSON with status, path, rows, and warnings. When to use: Use to convert CSV to styled Excel or export spreadsheets to CSV. When NOT to use: Do NOT use for editing existing spreadsheets (use edit_excel). Keywords: csv, excel, convert, xlsx, table, sheet, local, safe."""
+    try:
+        return _csv_excel_convert(
+            input_path=input,
+            output_path=output,
+            direction=direction or "csv_to_xlsx",
+            sheet=sheet,
+        )
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -393,13 +469,16 @@ def pdf_redact(
                 reg_list = json.loads(regions or "[]")
             except Exception:
                 reg_list = []
-        return _pdf_redact(
+        res = _pdf_redact(
             input_path=input_path,
             output=output,
             search_text=search_text,
             regions=reg_list,
             fill_color=fill_color or None,
         )
+        if isinstance(res, dict) and res.get("status") == "ok":
+            res["next_steps"] = ["Preview redacted document with pdf_preview", "Scrub document metadata with scrub_metadata"]
+        return res
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -422,6 +501,62 @@ def pdf_extract_structured(
 
 
 @mcp.tool()
+def document_diff(
+    path_a: str,
+    path_b: str,
+    format: str = "json",
+) -> dict:
+    """Compares two Word (.docx) or PDF documents returning honest textual differences (added, deleted, modified paragraphs) via difflib. Returns JSON with status, changes summary, diffs list, and textual warnings. When to use: Use to compare revisions or contract versions. When NOT to use: Do NOT use for legal-grade redlines or pixel diffs. Keywords: diff, compare, changes, revision, contract, local, safe."""
+    try:
+        return _document_diff(path_a=path_a, path_b=path_b, format=format or "json")
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def scrub_metadata(
+    input: str,
+    output: str,
+    fields: list = [],
+) -> dict:
+    """Removes sensitive metadata (author, title, revision history, editors, custom properties) from PDF, Word (.docx), Excel (.xlsx), and PowerPoint (.pptx) documents. Returns JSON with status, path, scrubbed fields, and byte size. When to use: Call before sharing documents externally. When NOT to use: Do NOT use to redact visual document content (use pdf_redact). Keywords: scrub, sanitize, metadata, privacy, author, clean, local, safe."""
+    try:
+        f_list = fields
+        if isinstance(fields, str):
+            try:
+                f_list = json.loads(fields or "[]")
+            except Exception:
+                f_list = [f.strip() for f in fields.split(",") if f.strip()]
+        return _scrub_metadata(input_path=input, output=output, fields=f_list or None)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def protect_office(
+    input: str,
+    output: str,
+    password: str,
+) -> dict:
+    """Protects Office documents (.docx, .xlsx, .pptx) with standard agile AES encryption password via msoffcrypto. Returns JSON with status, output path, and byte size. When to use: Use to password-protect sensitive workbooks, presentations, or documents. When NOT to use: Do NOT use for PDFs (use render_document or pdf_manipulate). Keywords: protect, password, encrypt, confidential, office, lock, local, safe."""
+    try:
+        return _protect_office(input_path=input, output=output, password=password)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def verify_pdf_signature(
+    input: str,
+) -> dict:
+    """Verifies cryptographic digital signatures in a PDF file via pyhanko and pypdf, returning honest validation status. Returns JSON with has_signature, valid, signer, date, reason, and warnings. When to use: Use to audit or verify signed contracts and invoices. When NOT to use: Do NOT use to sign documents (use sign_pdf). Keywords: verify signature, pades, audit, contract, integrity, local, safe."""
+    try:
+        return _verify_pdf_signature(input_path=input)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
 def office_batch(
     operations: list = [],
 ) -> dict:
@@ -437,7 +572,11 @@ def office_batch(
     dispatcher = {
         "render_document": render_document,
         "create_word": create_word,
+        "edit_word": edit_word,
+        "mail_merge": mail_merge,
         "create_excel": create_excel,
+        "edit_excel": edit_excel,
+        "csv_excel_convert": csv_excel_convert,
         "create_pptx": create_pptx,
         "read_pdf": read_pdf,
         "pdf_preview": pdf_preview,
@@ -449,12 +588,14 @@ def office_batch(
         "list_templates": list_templates,
         "pdf_compress": pdf_compress,
         "sign_pdf": sign_pdf,
-        "edit_excel": edit_excel,
-        "edit_word": edit_word,
         "pdf_to_excel": pdf_to_excel,
         "read_office": read_office,
         "pdf_redact": pdf_redact,
         "pdf_extract_structured": pdf_extract_structured,
+        "document_diff": document_diff,
+        "scrub_metadata": scrub_metadata,
+        "protect_office": protect_office,
+        "verify_pdf_signature": verify_pdf_signature,
     }
 
     results = []

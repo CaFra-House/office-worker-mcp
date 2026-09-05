@@ -5,13 +5,16 @@
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/office-worker-mcp)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-> **Your agent's document clerk.** Genera, edita, asegura y extrae documentos de oficina profesionales —
+> **Your agent's document clerk.** Genera, edita, asegura, audita y extrae documentos de oficina profesionales —
 > **PDF, Word, Excel y PowerPoint** — desde datos + tema corporativo, plantillas empaquetadas (docxtpl),
-> edición in-place, gráficos nativos Excel, extracción de imágenes para visión, preview PNG para inspección previa a entrega,
-> redacción irreversible permanente (`pdf_redact`), aplanado para cumplimiento de archivo (`flatten`),
-> extracción estructurada Markdown/JSON para RAG (`pdf_extract_structured`), división inteligente por límites (`split_smart`),
-> conversión PDF a Excel, skills empaquetadas y reporte honesto de fidelidad. Diseñado para agentes de IA (Hermes, Claude, Cursor)
-> vía [MCP](https://modelcontextprotocol.io), 100% local-first, sin API keys, determinista y seguro.
+> combinación de correspondencia por lotes (`mail_merge`), conversión bidireccional CSV-Excel (`csv_excel_convert`),
+> extracción Office a Markdown/JSON para RAG (`read_office`), comparación honesta de revisiones (`document_diff`),
+> limpieza de metadatos sensibles (`scrub_metadata`), protección con clave estándar Office (`protect_office`),
+> verificación criptográfica de firmas digitales (`verify_pdf_signature`), guiado proactivo con recomendaciones (`next_steps`),
+> gráficos nativos en PowerPoint y Excel, edición in-place, preview PNG para inspección previa a entrega,
+> redacción irreversible permanente (`pdf_redact`), aplanado para archivo (`flatten`),
+> división inteligente por límites (`split_smart`), conversión PDF a Excel, skills empaquetadas y reporte honesto de fidelidad.
+> Diseñado para agentes de IA (Hermes, Claude, Cursor) vía [MCP](https://modelcontextprotocol.io), 100% local-first, sin API keys, determinista y seguro.
 
 ```bash
 pip install office-worker-mcp          # instala librería + MCP server + CLI 'owi'
@@ -30,11 +33,20 @@ Conectalo a tu agente (ejemplo config MCP / stdio):
 Los MCPs de documentos existentes son CRUD genéricos (47–80 tools que inflan el contexto)
 y no cubren diseño, fidelidad honesta ni operaciones integrales sobre documentos. The Office Worker hace lo contrario:
 
-| Capacidad | office-mcp / takos | **The Office Worker (v0.6.0)** |
+| Capacidad | office-mcp / takos | **The Office Worker (v0.8.0)** |
 |---|---|---|
-| Tools & Contexto | ~47–80 CRUD genéricas (>6.4K tok) | **21 herramientas especializadas** (~1880 tok/turno total, <1900 tok, ~89 tok/tool) |
+| Tools & Contexto | ~47–80 CRUD genéricas (>6.4K tok) | **27 herramientas especializadas** (~2335 tok/turno total, <2350 tok, ~86 tok/tool) |
+| Comparación de Documentos | ❌ No disponible | ✅ `document_diff`: diff textual honesto (párrafos agregados/eliminados/modificados) Word/PDF con warnings |
+| Limpieza de Metadatos | ❌ No disponible | ✅ `scrub_metadata`: borrado de autor, título, revisiones y propiedades en PDF, Word, Excel y PowerPoint |
+| Cifrado / Contraseña Office | ❌ No disponible | ✅ `protect_office`: cifrado robusto ECMA-376 agile AES con contraseña para `.docx`, `.xlsx`, `.pptx` |
+| Verificación de Firmas | ❌ No disponible | ✅ `verify_pdf_signature`: validación criptográfica de integridad y certificados X.509 en PDF (pyhanko) |
+| Guiado Proactivo | ❌ Ejecución ciega | ✅ `next_steps` en tools de creación + skill de orquestación (`orchestration.SKILL.md`) |
+| Mail Merge Word | ❌ No disponible | ✅ `mail_merge`: genera N documentos `.docx` desde plantillas docxtpl + dataset CSV/JSON |
+| Office a Markdown / RAG | ❌ Solo texto plano disperso | ✅ `read_office(format="markdown")`: encabezados (`#`) y tablas pipe (`\|...\|`) de Word, Excel y PPTX |
+| Gráficos Nativos PowerPoint | ❌ Solo imágenes o HTML plano | ✅ `create_pptx`: diapositivas con gráficos nativos DrawingML (barras, líneas, torta) |
+| CSV <-> Excel Bidireccional | ❌ No disponible | ✅ `csv_excel_convert`: CSV a `.xlsx` estructurado (tablas/autofiltro) y `.xlsx` a CSV con warnings de tipo |
 | Redacción Irreversible | ❌ No disponible | ✅ `pdf_redact`: borrado permanente de PII/claves por texto o coordenadas con PyMuPDF |
-| Extracción RAG (Markdown / JSON) | ❌ Solo texto plano | ✅ `pdf_extract_structured`: tablas pipe Markdown y JSON estructurado para bases de conocimiento |
+| Extracción RAG PDF (Markdown / JSON) | ❌ Solo texto plano | ✅ `pdf_extract_structured`: tablas pipe Markdown y JSON estructurado para bases de conocimiento |
 | Aplanado de Formularios | ❌ No disponible | ✅ `pdf_manipulate(op="flatten")`: sella AcroForms a contenido estático para archivo seguro |
 | División Inteligente (Split) | ❌ Solo rangos fijos | ✅ `pdf_manipulate(op="split_smart")`: detecta límites heurísticos (páginas en blanco / carátulas) |
 | Skills Empaquetadas & CLI | ❌ No disponible | ✅ `owi skill install [name]`: despliega manuales y flujos oficiales en `~/.hermes/skills/` |
@@ -44,7 +56,6 @@ y no cubren diseño, fidelidad honesta ni operaciones integrales sobre documento
 | Reporte de fidelidad honesta | ❌ Silencio o afirmaciones falsas | ✅ `fidelity` (`rich` \| `clean` \| `lossy`) + `warnings` transparentes |
 | Visión en PDFs | ❌ Solo texto plano | ✅ `read_pdf(extract_images=True)` devuelve imágenes base64 para agentes multimodales |
 | PDF a Excel | ❌ No disponible | ✅ `pdf_to_excel` extrae tablas de PDFs directamente a hojas `.xlsx` estilizadas |
-| Extracción Office unificada | ❌ Requiere parsers dispersos | ✅ `read_office` lee `.docx`, `.pptx` y `.xlsx` en formato estructurado |
 | Gráficos nativos Excel | ❌ Solo celdas planas | ✅ Gráficos nativos de barras, líneas y torta embebidos en `.xlsx` |
 | Tablas estructuradas & Fórmulas | ❌ Solo texto crudo | ✅ Tablas Excel con estilos oficiales, `auto_filter` y fórmulas (`SUM`, `VLOOKUP`, etc.) |
 | Macros VBA | ❌ Corrupción de archivos `.xlsm` | ✅ Preservación explícita de código macro vía `keep_vba=True` (sin ejecución VBA) |
@@ -58,10 +69,18 @@ y no cubren diseño, fidelidad honesta ni operaciones integrales sobre documento
 
 ---
 
-## Las 21 Tools (v0.6.0)
+## Las 27 Tools (v0.8.0)
 
 | Tool | Qué retorna | Cuándo usarla | Cuándo NO usarla |
 |---|---|---|---|
+| `document_diff` | JSON `{status, summary, diffs, warnings}` | Para comparar dos documentos Word (.docx) o PDF y obtener diferencias de párrafos con warnings honestos | No usar para redlines legales semánticos o diffs de píxeles |
+| `scrub_metadata` | JSON `{status, path, bytes, scrubbed_fields}` | Para borrar autor, historial de revisiones, editores y propiedades personales en PDF, Word, Excel y PPTX | No usar para censurar texto visible en páginas (usar `pdf_redact`) |
+| `protect_office` | JSON `{status, path, bytes, encrypted}` | Para cifrar y proteger con contraseña documentos Office (.docx, .xlsx, .pptx) con AES estándar | No usar para PDFs (usar `render_document` o `pdf_manipulate`) |
+| `verify_pdf_signature` | JSON `{status, has_signature, valid, signer, date, warnings}` | Para verificar la integridad criptográfica y validez de firmas digitales en documentos PDF | No usar para firmar documentos (usar `sign_pdf`) |
+| `mail_merge` | JSON `{status, template, n_docs, paths, fields}` | Para generar N documentos Word `.docx` personalizados desde plantilla `docxtpl` + CSV/JSON | No usar para documentos aislados de un solo paso (usar `create_word`) |
+| `csv_excel_convert` | JSON `{status, path, bytes, n_rows, fidelity, warnings}` | Para convertir bidireccionalmente CSV a Excel estructurado y `.xlsx` a CSV | No usar para editar hojas de cálculo existentes (usar `edit_excel`) |
+| `read_office` | JSON `{status, format, content?, paragraphs/slides/sheets}` | Para extraer texto y tablas de Word, PowerPoint o Excel a Markdown (pipes) o JSON | No usar para archivos PDF (usar `read_pdf` o `pdf_extract_structured`) |
+| `create_pptx` | JSON `{status, path, bytes}` | Para crear presentaciones PowerPoint editables con tipografía, kickers y gráficos nativos | No usar para documentos de texto corrido o reportes en PDF |
 | `pdf_redact` | JSON `{status, path, bytes, redactions_count}` | Para borrar permanentemente información confidencial (texto o coordenadas) | No usar para edición normal de texto (usar `edit_word`) |
 | `pdf_extract_structured` | JSON `{status, format, content?, pages, n_tables}` | Para extraer texto y tablas en Markdown (pipes) o JSON estructurado para RAG | No usar en PDFs escaneados sin capa de texto (usar `pdf_ocr`) |
 | `pdf_preview` | JSON `{status, data_url, pages, path?, bytes?}` | Para renderizar páginas PDF a imagen PNG y revisarlo visualmente antes de entregarlo | No usar para extraer texto seleccionable (usar `read_pdf`) |
@@ -70,11 +89,9 @@ y no cubren diseño, fidelidad honesta ni operaciones integrales sobre documento
 | `edit_excel` | JSON `{status, path, bytes, fidelity, warnings}` | Para modificar celdas, agregar filas/columnas, tablas o gráficos en `.xlsx`/`.xlsm` existentes | No usar para crear planillas desde cero (usar `create_excel`) |
 | `edit_word` | JSON `{status, path, bytes, fidelity, warnings}` | Para editar `.docx` existentes (agregar párrafos, reemplazar texto, insertar tras títulos, tablas) | No usar para crear documentos nuevos desde cero (usar `create_word`) |
 | `pdf_to_excel` | JSON `{status, path, bytes, n_tables, fidelity, warnings}` | Para extraer tablas desde PDFs (balances, facturas, informes) a planillas `.xlsx` limpias | No usar para PDFs escaneados sin tablas seleccionables (usar `pdf_ocr`) |
-| `read_office` | JSON `{status, format, paragraphs/slides/sheets, text}` | Para extraer texto y datos estructurados directamente de `.docx`, `.pptx` o `.xlsx` | No usar para archivos PDF (usar `read_pdf`) |
 | `render_document` | JSON `{status, path, bytes}` | Para generar PDFs impecables desde plantillas HTML/Jinja + tema corporativo + logo + watermark | No usar para editar documentos existentes (usar `edit_word`/`pdf_manipulate`) |
 | `create_word` | JSON `{status, path, bytes}` | Para crear documentos Word `.docx` nuevos desde bloques o plantillas empaquetadas | No usar para editar documentos en disco (usar `edit_word`) |
 | `create_excel` | JSON `{status, path, bytes}` | Para crear libros Excel `.xlsx` multi-hoja con tablas estructuradas, autofiltro y gráficos | No usar para actualizar libros existentes (usar `edit_excel`) |
-| `create_pptx` | JSON `{status, path, bytes}` | Para crear presentaciones PowerPoint editables (texto nativo, kickers, bullets, tablas) | No usar para documentos de texto corrido o reportes en PDF |
 | `convert_to_pdf` | JSON `{status, path, bytes, fidelity, warnings}` | Para exportar archivos Office (`.docx`, `.xlsx`, `.pptx`) a PDF localmente con LibreOffice | No usar cuando se genera un documento nuevo desde plantilla HTML |
 | `sign_pdf` | JSON `{status, path, bytes}` | Para estampar sello visual PNG y aplicar firma digital criptográfica PAdES con certificado PEM | No usar para editar contenido textual de un documento |
 | `pdf_compress` | JSON `{status, path, bytes, savings_percent}` | Para optimizar y comprimir PDFs pesados reduciendo imágenes y limpiando objetos | No usar en PDFs de texto puro donde no hay imágenes |
@@ -86,9 +103,72 @@ y no cubren diseño, fidelidad honesta ni operaciones integrales sobre documento
 
 ---
 
-## Capacidades Destacadas (v0.6.0)
+## Capacidades Destacadas (v0.7.0)
 
-### 1. Redacción Irreversible y Permanente (`pdf_redact`)
+### 1. Mail Merge Word en Lotes (`mail_merge`)
+Genera $N$ documentos `.docx` independientes y personalizados combinando una plantilla `docxtpl` con placeholders `{{ variable }}` y un dataset tabular (CSV o JSON):
+- Alimenta variables complejas desde archivos `.csv` o estructuras JSON estructuradas (`pandas` + `docxtpl`).
+- Nomenclatura automática basada en prefijo (`<prefix>_1.docx`, `<prefix>_2.docx`).
+- Filtrado opcional de columnas (`fields`) para control granular de contexto.
+
+```json
+{
+  "template_path": "/workspace/plantilla_contrato.docx",
+  "dataset_csv": "/workspace/nomina_empleados.csv",
+  "output_prefix": "/workspace/contratos/contrato_firmado"
+}
+```
+
+### 2. Extracción Office a Markdown / JSON para RAG (`read_office`)
+Extrae directamente el contenido de archivos Word (`.docx`), PowerPoint (`.pptx`) y Excel (`.xlsx` / `.xlsm`) sin necesidad de convertirlos a PDF:
+- **`format: "markdown"`**: Genera texto legible con jerarquía de encabezados (`# Titulo`, `## Subtitulo`) y tablas estructuradas en formato pipe Markdown (`| ... |`) listas para ingestión en bases de conocimiento RAG.
+- **`format: "json"`** *(default, backward-compatible)*: Retorna objetos limpios con listas de párrafos, diapositivas y hojas de cálculo para inspección programática.
+
+```json
+{
+  "path": "/workspace/balance_gestion.xlsx",
+  "format": "markdown"
+}
+```
+
+### 3. Gráficos Nativos en PowerPoint (`create_pptx`)
+Soporta la inserción de gráficos nativos DrawingML (`bar`, `line`, `pie`) en diapositivas individuales mediante `python-pptx`:
+- Gráficos 100% nativos: no son imágenes rasterizadas planas. Al abrir el `.pptx` en PowerPoint o Google Slides, los datos y series son completamente editables.
+- Datos inline estructurados con categorías y valores numéricos o series multi-variable.
+
+```json
+{
+  "out_path": "/workspace/reporte_ejecutivo.pptx",
+  "slides_json": [
+    {
+      "title": "Evolución de Rendimiento 2026",
+      "kicker": "Finanzas",
+      "chart": {
+        "type": "bar",
+        "title": "Ingresos por Trimestre (kUSD)",
+        "categories": ["Q1", "Q2", "Q3", "Q4"],
+        "values": [120, 160, 210, 290]
+      }
+    }
+  ]
+}
+```
+
+### 4. Conversión Bidireccional CSV <-> Excel (`csv_excel_convert`)
+Convierte archivos CSV a libros Excel estructurados (`.xlsx`) y viceversa:
+- **CSV -> Excel**: Genera tablas oficiales (`TableStyleMedium9`), autofiltro, ajuste de columnas y preservación de códigos numéricos con ceros a la izquierda (ej: códigos postales, identificadores).
+- **Excel -> CSV**: Exporta la hoja activa o todas las hojas del libro (`sheet="all"`) a archivos CSV limpios, emitiendo advertencias honestas (`warnings`) ante cualquier ambigüedad de tipo.
+
+```json
+{
+  "input": "/workspace/datos_clientes.csv",
+  "output": "/workspace/clientes_estructurado.xlsx",
+  "direction": "csv_to_xlsx",
+  "sheet": "Clientes"
+}
+```
+
+### 5. Redacción Irreversible y Permanente (`pdf_redact`)
 Permite al agente censurar permanentemente información confidencial (PII, números de tarjetas, contraseñas, saldos o nombres) antes de distribuir un documento PDF.
 Soporta búsqueda por texto o regiones rectangulares explícitas `[x0, y0, x1, y1]`, aplicando anotaciones de redacción vía PyMuPDF (`page.apply_redactions()`). A diferencia de simples rectángulos negros superpuestos, la redacción **destruye físicamente el contenido textual y vectorial del stream del PDF**, haciendo imposible su recuperación o copia:
 
@@ -102,7 +182,7 @@ Soporta búsqueda por texto o regiones rectangulares explícitas `[x0, y0, x1, y
 }
 ```
 
-### 2. Aplanado de Formularios para Cumplimiento de Archivo (`flatten`)
+### 6. Aplanado de Formularios para Cumplimiento de Archivo (`flatten`)
 Convierte campos de formularios interactivos AcroForm y anotaciones en contenido gráfico y textual estático mediante PyMuPDF (`doc.bake(annots=True, widgets=True)`). Garantiza que contratos y formularios completados no puedan ser manipulados ni alterados posteriormente:
 
 ```json
@@ -113,7 +193,7 @@ Convierte campos de formularios interactivos AcroForm y anotaciones en contenido
 }
 ```
 
-### 3. Extracción Estructurada Markdown / JSON para RAG (`pdf_extract_structured`)
+### 7. Extracción Estructurada Markdown / JSON para RAG en PDF (`pdf_extract_structured`)
 Optimizado para flujos de trabajo de ingesta de conocimiento y RAG (Retrieval-Augmented Generation). Extrae texto limpio, metadatos y matrices de tablas mediante `pdfplumber` + `PyMuPDF`:
 - **`format: "markdown"`**: Genera encabezados jerárquicos (`# Titulo`, `## Página N`) y tablas convertidas a formato pipe Markdown estándar (`| Col | Col |`).
 - **`format: "json"`**: Retorna objetos `{pages: [{page, text, tables, images_n}]}` estructurados para segmentación semántica de datos.
@@ -126,7 +206,7 @@ Optimizado para flujos de trabajo de ingesta de conocimiento y RAG (Retrieval-Au
 }
 ```
 
-### 4. División Inteligente de Documentos (`split_smart`)
+### 8. División Inteligente de Documentos (`split_smart`)
 Detecta heurísticamente los límites entre documentos concatenados (por páginas separadoras en blanco sin texto ni gráficos, o por carátulas/encabezados repetidos) y los divide automáticamente en $N$ archivos independientes válidos:
 
 ```json
@@ -138,7 +218,7 @@ Detecta heurísticamente los límites entre documentos concatenados (por página
 ```
 *Honestidad técnica:* Si no se detecta un límite confiable, la herramienta emite advertencias honestas (`warnings`) y mantiene el documento íntegro en lugar de inventar particiones arbitrarias.
 
-### 5. Skills Empaquetadas & Comando CLI (`owi skill install`)
+### 9. Skills Empaquetadas & Comando CLI (`owi skill install`)
 The Office Worker empaqueta manuales de operación (`SKILL.md`) con ejemplos conversacionales en inglés, reglas duras anti-loop y flujos opcionales de Google Drive / Gmail (`workspace-mcp`).
 Instala la skill en el entorno de tu agente con un solo comando idempotente:
 
@@ -148,10 +228,10 @@ owi skill install office-worker      # Copia la skill a ~/.hermes/skills/office-
 owi skill install all                # Instala todas las skills empaquetadas
 ```
 
-### 6. Preview PNG para Visión de Agentes (`pdf_preview`)
+### 10. Preview PNG para Visión de Agentes (`pdf_preview`)
 Renderiza páginas PDF a imágenes PNG de alta resolución (`dpi=110`) mediante PyMuPDF (`page.get_pixmap()`), retornando Data URLs en base64 (`data:image/png;base64,...`) para inspección visual previa a la entrega final.
 
-### 7. Batch Operations (`office_batch`)
+### 11. Batch Operations (`office_batch`)
 Despacha secuencias completas de operaciones documentales en un solo turno con manejo de errores parciales:
 ```json
 {
@@ -164,15 +244,143 @@ Despacha secuencias completas de operaciones documentales en un solo turno con m
 }
 ```
 
-### 8. Edición In-Place (`edit_excel` y `edit_word`)
+### 12. Edición In-Place (`edit_excel` y `edit_word`)
 Modifica documentos existentes en el mismo archivo o en uno nuevo sin perder estilos previos:
 - **`edit_excel`**: Modifica celdas (`set_cell`), agrega filas (`append_row`), agrega columnas (`add_column`), agrega tablas estilizadas (`add_table`), activa filtros (`auto_filter`) e inserta gráficos (`add_chart`).
 - **`edit_word`**: Agrega párrafos (`append_paragraph`), reemplaza texto preservando formato de run (`replace_text`), inserta contenido tras encabezados (`insert_after_heading`) o añade tablas (`append_table`).
 
-### 9. Reporte de Fidelidad Honesta
+### 13. Reporte de Fidelidad Honesta
 `convert_to_pdf`, `edit_excel`, `edit_word` y `pdf_to_excel` devuelven:
 - `fidelity`: `"rich"` (edición sin pérdida o nativa), `"clean"` (conversión estándar de alta fidelidad), o `"lossy"` (degradación esperable por limitaciones de formato).
 - `warnings`: Lista explícita de advertencias (sustitución tipográfica, saltos de página automáticos en planillas anchas, macros no ejecutadas).
+
+### 14. Comparación y Diff Honesto de Documentos (`document_diff`)
+Compara dos documentos Word (`.docx`) o PDF y calcula las diferencias textuales reales entre versiones mediante `difflib`:
+- Reporta párrafos agregados (`added`), eliminados (`deleted`), modificados (`modified`) e intactos (`unchanged`).
+- Formatos disponibles: JSON estructurado o Markdown formateado (`format="markdown"`).
+- **Advertencia honesta:** La herramienta emite explícitamente un warning indicando que se trata de una comparación textual aproximada y no de un redline legal-grade semántico.
+
+### 15. Limpieza de Metadatos Sensibles (`scrub_metadata`)
+Elimina metadatos de auditoría y rastreo antes de compartir documentos externamente:
+- **PDF**: Borra diccionario de metadatos vía PyMuPDF (`set_metadata({})`) y ejecuta compactación profunda (`garbage=4, clean=True`).
+- **Word (.docx)**: Limpia `core_properties` (autor, último editor, título, asunto, comentarios, categoría, resetea número de revisión).
+- **Excel (.xlsx)**: Limpia propiedades de libro (creador, último modificador, título, descripción).
+- **PowerPoint (.pptx)**: Limpia propiedades de presentación (autor, editores, asunto).
+- Soporta filtrado por campos específicos (`fields=['author', 'title']`) o limpieza total por defecto.
+
+### 16. Cifrado y Protección con Contraseña en Office (`protect_office`)
+Aplica cifrado ágil estándar por contraseña (ECMA-376 Agile Encryption con AES-128/256) sobre archivos Word (`.docx`), Excel (`.xlsx`) y PowerPoint (`.pptx`) mediante `msoffcrypto`:
+- Al abrir el archivo sin la contraseña correcta, aplicaciones como Microsoft Office, LibreOffice u openpyxl rechazan la lectura (`BadZipFile`).
+- Abre y descifra de forma transparente al proveer la clave correcta.
+
+### 17. Verificación de Firmas Digitales PDF (`verify_pdf_signature`)
+Audita y valida documentos PDF firmados digitalmente mediante `pyhanko` y `pypdf`:
+- Inspecciona si el documento contiene firmas digitales embebidas (`has_signature: true/false`).
+- Valida la integridad criptográfica del digest (`intact: true`) comprobando que el archivo no haya sido alterado tras la firma.
+- Extrae metadatos del firmante (Common Name del certificado X.509), fecha de firma (`D:YYYYMMDD...`), motivo y ubicación.
+- Emite advertencias transparentes cuando el certificado es auto-firmado o no está anclado en la cadena de confianza del sistema.
+
+### 18. Guiado Proactivo (`next_steps` y Skill de Orquestación)
+- Las herramientas principales de generación y transformación (`create_word`, `create_excel`, `create_pptx`, `render_document`, `convert_to_pdf`, `sign_pdf`, `pdf_redact`, `mail_merge`) retornan un campo opcional `"next_steps"` con la siguiente acción lógica sugerida en inglés (ej. tras `create_word` &rarr; `["Convert to PDF with convert_to_pdf", "Preview rendered document with pdf_preview"]`).
+- Incluye la skill empaquetada `orchestration.SKILL.md` instalable con `owi skill install orchestration`, mapeando intenciones de negocio (factura, informe, acta, contrato, auditoria, batch, redact, sign, rag, compliance) a cadenas de herramientas deterministas.
+
+---
+
+## Flujos Conversacionales de Ejemplo (EN)
+
+### Flujo 1: Bulk Mail Merge (Generating Employee Welcome Letters)
+*User:* "I have a CSV with 50 new hires and a Word template. Generate personalized welcome letters for all of them."
+*Agent:*
+```json
+{
+  "template_path": "templates/welcome_letter.docx",
+  "dataset_csv": "data/new_hires.csv",
+  "output_prefix": "output/letters/welcome"
+}
+```
+*Result:* Returns `{"status": "ok", "n_docs": 50, "paths": [".../welcome_1.docx", ...]}`.
+
+### Flujo 2: Ingesting Office Spreadsheets into RAG Context
+*User:* "Read our quarterly financial balance sheet and give me the markdown table so I can analyze it."
+*Agent:*
+```json
+{
+  "path": "reports/q3_balance.xlsx",
+  "format": "markdown"
+}
+```
+*Result:* Returns clean Markdown pipe tables per sheet with exact numeric values.
+
+### Flujo 3: Executive Deck with Native PowerPoint Charts
+*User:* "Create an executive presentation with 2 slides: title slide and a quarterly sales bar chart."
+*Agent:*
+```json
+{
+  "out_path": "presentations/sales_q3.pptx",
+  "slides_json": [
+    {
+      "title": "Quarterly Business Review",
+      "kicker": "Executive Summary",
+      "bullets": ["Q3 Key Performance Indicators", "Next Steps"]
+    },
+    {
+      "title": "Revenue Growth 2026",
+      "kicker": "Performance",
+      "chart": {
+        "type": "bar",
+        "title": "Quarterly Revenue ($M)",
+        "categories": ["Q1", "Q2", "Q3", "Q4"],
+        "values": [12.4, 14.2, 16.8, 19.5]
+      }
+    }
+  ]
+}
+```
+
+### Flujo 4: Comparing Contract Revisions (`document_diff`)
+*User:* "Compare agreement_draft_v1.docx and agreement_draft_v2.docx and tell me what changed."
+*Agent:*
+```json
+{
+  "path_a": "agreement_draft_v1.docx",
+  "path_b": "agreement_draft_v2.docx",
+  "format": "markdown"
+}
+```
+*Result:* Returns markdown summary with modified/added clauses and transparent warnings about textual difflib boundaries.
+
+### Flujo 5: Scrubbing Sensitive Metadata before External Dispatch (`scrub_metadata`)
+*User:* "Scrub all author, editor, and revision metadata from executive_report.docx before we email it to partners."
+*Agent:*
+```json
+{
+  "input": "executive_report.docx",
+  "output": "executive_report_clean.docx"
+}
+```
+*Result:* Returns `{"status": "ok", "scrubbed_fields": ["author", "comments", "last_modified_by", "revision", "title"]}`.
+
+### Flujo 6: Password-Protecting Spreadsheets (`protect_office`)
+*User:* "Lock compensation_matrix.xlsx with password 'HR-Enterprise-2026!'."
+*Agent:*
+```json
+{
+  "input": "compensation_matrix.xlsx",
+  "output": "compensation_matrix_encrypted.xlsx",
+  "password": "HR-Enterprise-2026!"
+}
+```
+*Result:* Returns `{"status": "ok", "encrypted": true}` producing standard agile AES encrypted spreadsheet.
+
+### Flujo 7: Verifying Cryptographic PDF Digital Signatures (`verify_pdf_signature`)
+*User:* "Verify if this signed vendor contract vendor_contract_signed.pdf has an intact digital signature."
+*Agent:*
+```json
+{
+  "input": "vendor_contract_signed.pdf"
+}
+```
+*Result:* Returns `{"has_signature": true, "valid": true, "intact": true, "signer": "Common Name: Julio Cardozo", "reason": "Approved"}`.
 
 ---
 
@@ -193,6 +401,10 @@ Para garantizar total transparencia técnica frente a los usuarios y administrad
    - Requiere el extra opcional `[pptx]` junto con Playwright y Chromium instalado (`playwright install chromium`).
 5. **Firmas Digitales Criptográficas:**
    - El estampado visual PNG funciona siempre. La firma criptográfica digital PAdES requiere un certificado X.509 válido en formato PEM.
+6. **Cifrado Office (`protect_office`):**
+   - Aplica cifrado agile estándar ECMA-376 con AES mediante `msoffcrypto`. Protege la apertura del archivo en Word, Excel y PowerPoint. La protección con clave de archivos PDF se realiza mediante `render_document(password=...)` o `pdf_manipulate(operation="encrypt", password=...)`.
+7. **Comparación de Documentos (`document_diff`):**
+   - La comparación se realiza a nivel textual mediante `difflib` sobre el texto y párrafos extraídos de Word (.docx) y PDF. No constituye un redline semántico ni legal-grade con seguimiento de marcas Word OOXML track changes nativo.
 
 ---
 

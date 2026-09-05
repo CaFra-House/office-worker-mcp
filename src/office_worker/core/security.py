@@ -117,3 +117,26 @@ def safe_url_fetcher(url: str, timeout: int = 10, ssl_context=None, http_headers
     except (ImportError, AttributeError):
         from weasyprint import default_url_fetcher
         return default_url_fetcher(url, timeout=timeout, ssl_context=ssl_context, http_headers=http_headers)
+
+
+def run_in_worker_thread_if_async(func, *args, **kwargs):
+    """Ejecuta una función síncrona en un worker thread si se invoca dentro de un event loop activo.
+
+    Bibliotecas como PyHanko invocan internamente `asyncio.run()`, lo que genera RuntimeError
+    si el llamador ya se encuentra en un contexto asyncio (por ejemplo el servidor FastMCP o
+    runners de tests asíncronos). Ejecutar en un ThreadPoolExecutor garantiza un entorno sin
+    event loop activo donde `asyncio.run()` opera de forma segura.
+    """
+    import asyncio
+    import concurrent.futures
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(func, *args, **kwargs).result()
+    return func(*args, **kwargs)
+

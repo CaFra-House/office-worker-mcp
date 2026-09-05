@@ -24,7 +24,7 @@ async def test_office_worker_mcp_e2e(tmp_path):
         async with ClientSession(r, w) as s:
             await s.initialize()
             tools = [t.name for t in (await s.list_tools()).tools]
-            assert len(tools) == 21 and "render_document" in tools and "pdf_preview" in tools and "pdf_redact" in tools and "pdf_extract_structured" in tools, f"tools inesperadas: {tools}"
+            assert len(tools) == 27 and "document_diff" in tools and "scrub_metadata" in tools and "protect_office" in tools and "verify_pdf_signature" in tools and "render_document" in tools and "pdf_preview" in tools and "pdf_redact" in tools and "pdf_extract_structured" in tools and "mail_merge" in tools and "csv_excel_convert" in tools, f"tools inesperadas: {tools}"
 
             async def call(name, args): return json.loads((await s.call_tool(name, args)).content[0].text)
 
@@ -411,5 +411,256 @@ async def test_office_worker_mcp_e2e(tmp_path):
             assert r_batch_v6["succeeded"] == 2
             assert os.path.exists(f"{d}/batch_redacted.pdf")
             assert os.path.exists(f"{d}/batch_extracted.md")
+
+            # 27 mail_merge E2E
+            mm_tpl = f"{d}/mail_merge_tpl.docx"
+            doc_mm = Document()
+            doc_mm.add_paragraph("Hola {{ cliente }}, tu plan es {{ plan }}.")
+            doc_mm.save(mm_tpl)
+
+            mm_csv = f"{d}/clientes.csv"
+            with open(mm_csv, "w", encoding="utf-8") as f:
+                f.write("cliente,plan\nAna,Pro\nBeto,Enterprise\n")
+
+            r_mm = await call("mail_merge", {
+                "template_path": mm_tpl,
+                "dataset_csv": mm_csv,
+                "output_prefix": f"{d}/carta_mm"
+            })
+            assert r_mm["status"] == "ok"
+            assert r_mm["n_docs"] == 2
+            assert len(r_mm["paths"]) == 2
+            for p_mm in r_mm["paths"]:
+                assert os.path.exists(p_mm)
+                assert open(p_mm, "rb").read(2) == b"PK"
+            doc_check1 = Document(r_mm["paths"][0])
+            assert "Ana" in doc_check1.paragraphs[0].text
+            doc_check2 = Document(r_mm["paths"][1])
+            assert "Beto" in doc_check2.paragraphs[0].text
+
+            # 28 read_office formato markdown E2E
+            r_ro_md = await call("read_office", {
+                "path": results["docx"]["path"],
+                "format": "markdown"
+            })
+            assert r_ro_md["status"] == "ok"
+            assert r_ro_md["format"] == "markdown"
+            assert "# " in r_ro_md["content"] or "## " in r_ro_md["content"]
+            assert "|" in r_ro_md["content"]
+
+            r_ro_xlsx_md = await call("read_office", {
+                "path": results["xlsx"]["path"],
+                "format": "markdown"
+            })
+            assert r_ro_xlsx_md["status"] == "ok"
+            assert r_ro_xlsx_md["format"] == "markdown"
+            assert "## Resumen" in r_ro_xlsx_md["content"]
+            assert "Ingresos" in r_ro_xlsx_md["content"] and "|" in r_ro_xlsx_md["content"]
+
+            # 29 csv_excel_convert bidireccional E2E
+            r_c2x = await call("csv_excel_convert", {
+                "input": mm_csv,
+                "output": f"{d}/clientes.xlsx",
+                "direction": "csv_to_xlsx",
+                "sheet": "Clientes"
+            })
+            assert r_c2x["status"] == "ok"
+            assert os.path.exists(r_c2x["path"])
+            assert open(r_c2x["path"], "rb").read(2) == b"PK"
+            assert r_c2x["n_rows"] == 3
+
+            r_x2c = await call("csv_excel_convert", {
+                "input": r_c2x["path"],
+                "output": f"{d}/clientes_roundtrip.csv",
+                "direction": "xlsx_to_csv"
+            })
+            assert r_x2c["status"] == "ok"
+            assert os.path.exists(r_x2c["path"])
+            with open(r_x2c["path"], "r", encoding="utf-8") as f:
+                csv_rt = f.read()
+            assert "Ana" in csv_rt and "Enterprise" in csv_rt
+
+            # 30 create_pptx con gráfico nativo E2E
+            r_pptx_chart = await call("create_pptx", {
+                "out_path": f"{d}/deck_chart_e2e.pptx",
+                "slides_json": json.dumps([
+                    {
+                        "title": "Métricas Q1-Q4",
+                        "kicker": "Rendimiento",
+                        "chart": {
+                            "type": "bar",
+                            "title": "Ventas 2026",
+                            "categories": ["Q1", "Q2", "Q3", "Q4"],
+                            "values": [100, 150, 220, 310]
+                        }
+                    }
+                ])
+            })
+            assert r_pptx_chart["status"] == "ok"
+            assert os.path.exists(r_pptx_chart["path"])
+            from pptx import Presentation
+            prs_e2e = Presentation(r_pptx_chart["path"])
+            assert any(s.has_chart for s in prs_e2e.slides[0].shapes)
+
+            # 31 office_batch con nuevas tools v0.7.0
+            r_batch_v7 = await call("office_batch", {
+                "operations": [
+                    {
+                        "tool": "csv_excel_convert",
+                        "args": {
+                            "input": mm_csv,
+                            "output": f"{d}/batch_clientes.xlsx",
+                            "direction": "csv_to_xlsx"
+                        }
+                    },
+                    {
+                        "tool": "read_office",
+                        "args": {
+                            "path": f"{d}/batch_clientes.xlsx",
+                            "format": "markdown"
+                        }
+                    }
+                ]
+            })
+            assert r_batch_v7["status"] == "ok"
+            assert r_batch_v7["total"] == 2
+            assert r_batch_v7["succeeded"] == 2
+            assert os.path.exists(f"{d}/batch_clientes.xlsx")
+
+            # 32 next_steps verification on primary creation tools
+            assert "next_steps" in results["pdf"] and len(results["pdf"]["next_steps"]) > 0
+            assert "next_steps" in results["docx"] and len(results["docx"]["next_steps"]) > 0
+            assert "next_steps" in results["xlsx"] and len(results["xlsx"]["next_steps"]) > 0
+            assert "next_steps" in results["sign"] and len(results["sign"]["next_steps"]) > 0
+            assert "next_steps" in r_redact and len(r_redact["next_steps"]) > 0
+
+            # 33 document_diff E2E
+            doc_mod = f"{d}/b_modified.docx"
+            from docx import Document
+            d_mod = Document(results["docx"]["path"])
+            d_mod.add_paragraph("Nueva cláusula de auditoría agregada en revisión.")
+            d_mod.save(doc_mod)
+
+            r_diff = await call("document_diff", {
+                "path_a": results["docx"]["path"],
+                "path_b": doc_mod,
+                "format": "markdown",
+            })
+            assert r_diff["status"] == "ok"
+            assert r_diff["has_changes"] is True
+            assert r_diff["summary"]["added"] >= 1
+            assert "diff_markdown" in r_diff
+            assert len(r_diff.get("warnings", [])) > 0
+
+            # 34 scrub_metadata E2E
+            scrubbed_docx = f"{d}/docx_scrubbed.docx"
+            r_scrub = await call("scrub_metadata", {
+                "input": results["docx"]["path"],
+                "output": scrubbed_docx,
+            })
+            assert r_scrub["status"] == "ok"
+            assert os.path.exists(scrubbed_docx)
+            assert open(scrubbed_docx, "rb").read(2) == b"PK"
+            assert "author" in r_scrub.get("scrubbed_fields", []) or "revision" in r_scrub.get("scrubbed_fields", [])
+
+            # 35 protect_office E2E
+            protected_xlsx = f"{d}/xlsx_protected.xlsx"
+            r_prot = await call("protect_office", {
+                "input": results["xlsx"]["path"],
+                "output": protected_xlsx,
+                "password": "PasswordE2E2026!",
+            })
+            assert r_prot["status"] == "ok"
+            assert os.path.exists(protected_xlsx)
+            assert r_prot.get("encrypted") is True
+            from zipfile import BadZipFile
+            import openpyxl, msoffcrypto
+            with pytest.raises(BadZipFile):
+                openpyxl.load_workbook(protected_xlsx)
+            with open(protected_xlsx, "rb") as f:
+                of = msoffcrypto.OfficeFile(f)
+                assert of.is_encrypted() is True
+
+            # 36 verify_pdf_signature E2E
+            # 36.a Unsigned PDF
+            r_ver_un = await call("verify_pdf_signature", {
+                "input": results["pdf"]["path"],
+            })
+            assert r_ver_un["status"] == "ok"
+            assert r_ver_un["has_signature"] is False
+            assert r_ver_un["valid"] is False
+
+            # 36.b Digital signed PDF with PEM
+            import datetime
+            from cryptography import x509
+            from cryptography.x509.oid import NameOID
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import rsa
+
+            key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            subject = issuer = x509.Name([
+                x509.NameAttribute(NameOID.COMMON_NAME, "Julio Cardozo E2E"),
+            ])
+            cert = (
+                x509.CertificateBuilder()
+                .subject_name(subject)
+                .issuer_name(issuer)
+                .public_key(key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+                .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1))
+                .sign(key, hashes.SHA256())
+            )
+            cert_pem_file = f"{d}/cert_e2e.pem"
+            with open(cert_pem_file, "wb") as f:
+                f.write(cert.public_bytes(serialization.Encoding.PEM))
+                f.write(key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                ))
+
+            signed_dig_pdf = f"{d}/signed_digital_e2e.pdf"
+            r_sign_dig = await call("sign_pdf", {
+                "input_pdf": results["pdf"]["path"],
+                "output": signed_dig_pdf,
+                "cert_pem": cert_pem_file,
+                "reason": "Validación Técnica E2E",
+                "location": "Buenos Aires",
+            })
+            assert r_sign_dig["status"] == "ok"
+
+            r_ver_dig = await call("verify_pdf_signature", {
+                "input": signed_dig_pdf,
+            })
+            assert r_ver_dig["status"] == "ok"
+            assert r_ver_dig["has_signature"] is True
+            assert r_ver_dig["valid"] is True
+            assert r_ver_dig["intact"] is True
+            assert "Julio Cardozo E2E" in (r_ver_dig["signer"] or "")
+            assert r_ver_dig["reason"] == "Validación Técnica E2E"
+
+            # 37 office_batch con tools v0.8.0
+            r_batch_v8 = await call("office_batch", {
+                "operations": [
+                    {
+                        "tool": "document_diff",
+                        "args": {
+                            "path_a": results["docx"]["path"],
+                            "path_b": doc_mod,
+                        }
+                    },
+                    {
+                        "tool": "scrub_metadata",
+                        "args": {
+                            "input": results["docx"]["path"],
+                            "output": f"{d}/batch_scrubbed.docx",
+                        }
+                    }
+                ]
+            })
+            assert r_batch_v8["status"] == "ok"
+            assert r_batch_v8["total"] == 2
+            assert r_batch_v8["succeeded"] == 2
 
 

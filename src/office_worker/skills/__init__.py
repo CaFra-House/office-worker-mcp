@@ -23,6 +23,12 @@ SKILLS_CATALOG = {
         "title": "Google Drive & Gmail Integration",
         "description": "Optional workflow to upload generated documents to Drive or draft Gmail via workspace-mcp.",
     },
+    "orchestration": {
+        "slug": "office-worker-orchestration",
+        "file": "orchestration.SKILL.md",
+        "title": "Office Worker Orchestration",
+        "description": "Intent-to-tools workflow orchestration (factura, informe, acta, contrato, auditoria, batch, redact, sign, rag, compliance) with anti-loop guidance.",
+    },
 }
 
 # Alias map
@@ -31,6 +37,9 @@ ALIASES = {
     "office_worker": "office-worker",
     "google": "google-drive-gmail",
     "google_drive_gmail": "google-drive-gmail",
+    "orchestration": "orchestration",
+    "workflow": "orchestration",
+    "workflows": "orchestration",
 }
 
 

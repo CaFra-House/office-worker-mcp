@@ -230,3 +230,109 @@ def edit_word(
         "operations_applied": len(ops),
     }
 
+
+def mail_merge(
+    template_path: str,
+    dataset_csv: str = "",
+    dataset_json: str = "",
+    output_prefix: str = "",
+    fields: list[str] | str | None = None,
+) -> dict[str, Any]:
+    """Genera N documentos .docx combinando una plantilla docxtpl con un dataset CSV o JSON.
+
+    - template_path: ruta a la plantilla .docx con placeholders {{ variable }}.
+    - dataset_csv: ruta a archivo CSV o texto CSV plano.
+    - dataset_json: ruta a archivo JSON o texto/estructura JSON.
+    - output_prefix: prefijo para los archivos generados (ej: 'docs/carta' -> 'docs/carta_1.docx').
+    - fields: lista o nombres de campos opcionales para filtrar columnas.
+
+    Devuelve dict con status, n_docs, paths y fields.
+    """
+    import io
+    import json
+    from pathlib import Path
+    import pandas as pd
+    from docxtpl import DocxTemplate
+    from .templates_pack import resolve_template_path
+
+    try:
+        tpl_path = resolve_template_path(template_path)
+    except Exception:
+        tpl_path = os.path.abspath(os.path.expanduser(str(template_path)))
+
+    if not os.path.exists(tpl_path):
+        raise FileNotFoundError(f"Plantilla no encontrada: {template_path}")
+
+    df = None
+    if dataset_csv:
+        csv_str = str(dataset_csv).strip()
+        if os.path.isfile(csv_str):
+            df = pd.read_csv(csv_str)
+        else:
+            df = pd.read_csv(io.StringIO(csv_str))
+    elif dataset_json:
+        if isinstance(dataset_json, str):
+            json_str = dataset_json.strip()
+            if os.path.isfile(json_str):
+                with open(json_str, "r", encoding="utf-8") as f:
+                    raw_data = json.load(f)
+            else:
+                raw_data = json.loads(json_str)
+        else:
+            raw_data = dataset_json
+
+        if isinstance(raw_data, list):
+            df = pd.DataFrame(raw_data)
+        elif isinstance(raw_data, dict):
+            rows = raw_data.get("rows") or raw_data.get("data") or [raw_data]
+            df = pd.DataFrame(rows)
+        else:
+            raise ValueError(f"Formato JSON no reconocido para dataset: {type(raw_data)}")
+    else:
+        raise ValueError("Debe especificarse dataset_csv o dataset_json.")
+
+    if df is None or df.empty:
+        raise ValueError("El dataset está vacío o no contiene filas.")
+
+    if fields:
+        if isinstance(fields, str):
+            try:
+                f_list = json.loads(fields)
+            except Exception:
+                f_list = [f.strip() for f in fields.split(",") if f.strip()]
+        else:
+            f_list = list(fields)
+        valid_cols = [c for c in f_list if c in df.columns]
+        if valid_cols:
+            df = df[valid_cols]
+
+    df.columns = [str(c) for c in df.columns]
+    records = df.fillna("").to_dict(orient="records")
+
+    if not output_prefix:
+        base_dir = os.path.dirname(os.path.abspath(tpl_path))
+        stem = Path(tpl_path).stem
+        output_prefix = os.path.join(base_dir, f"{stem}_merged")
+    else:
+        output_prefix = str(output_prefix)
+        if output_prefix.endswith(".docx"):
+            output_prefix = output_prefix[:-5]
+
+    paths = []
+    for idx, rec in enumerate(records, start=1):
+        target_file = safe_out(f"{output_prefix}_{idx}.docx")
+        tpl = DocxTemplate(tpl_path)
+        tpl.render(rec)
+        tpl.save(target_file)
+        if os.path.getsize(target_file) < 300:
+            raise RuntimeError(f"DOCX generado sospechosamente pequeño ({os.path.getsize(target_file)}B): {target_file}")
+        paths.append(os.path.abspath(target_file))
+
+    return {
+        "status": "ok",
+        "template": os.path.abspath(tpl_path),
+        "n_docs": len(paths),
+        "paths": paths,
+        "fields": list(df.columns),
+    }
+

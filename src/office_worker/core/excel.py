@@ -328,3 +328,190 @@ def edit_excel(
         "operations_applied": len(ops),
         "sheets_modified": list(sheets_touched),
     }
+
+
+def csv_excel_convert(
+    input_path: str,
+    output_path: str,
+    direction: str = "",
+    sheet: str = "",
+) -> dict[str, Any]:
+    """Convierte bidireccionalmente entre archivos CSV y libros Excel (.xlsx).
+
+    - input_path: ruta al archivo de entrada (.csv o .xlsx).
+    - output_path: ruta al archivo de salida (.xlsx o .csv).
+    - direction: 'csv_to_xlsx' o 'xlsx_to_csv'. Si está vacío, se infiere de las extensiones.
+    - sheet: nombre de hoja específica en Excel a exportar (o 'all' para exportar todas a CSV separados).
+
+    Devuelve dict con status, path, filas convertidas, fidelidad honesta y warnings de tipo.
+    """
+    import csv
+    from pathlib import Path
+
+    input_path = os.path.abspath(os.path.expanduser(str(input_path)))
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(f"Archivo de entrada no encontrado: {input_path}")
+
+    target_out = safe_out(output_path)
+
+    dir_clean = str(direction or "").lower().strip()
+    if not dir_clean:
+        if input_path.lower().endswith((".xlsx", ".xlsm")):
+            dir_clean = "xlsx_to_csv"
+        else:
+            dir_clean = "csv_to_xlsx"
+
+    warnings: list[str] = []
+
+    if dir_clean in ("csv_to_xlsx", "csv_to_excel"):
+        # Detectar delimitador de forma robusta
+        with open(input_path, "r", encoding="utf-8", errors="replace") as f:
+            sample = f.read(4096)
+        delimiter = ","
+        try:
+            sniffer = csv.Sniffer()
+            dialect = sniffer.sniff(sample)
+            delimiter = dialect.delimiter
+        except Exception:
+            if "\t" in sample and "," not in sample:
+                delimiter = "\t"
+            elif ";" in sample and "," not in sample:
+                delimiter = ";"
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = (sheet[:31] if sheet else "Datos")
+
+        rows_data = []
+        with open(input_path, "r", encoding="utf-8", errors="replace") as f:
+            reader = csv.reader(f, delimiter=delimiter)
+            for row in reader:
+                rows_data.append(row)
+
+        if not rows_data:
+            wb.save(target_out)
+            return {
+                "status": "ok",
+                "path": os.path.abspath(target_out),
+                "bytes": os.path.getsize(target_out),
+                "n_rows": 0,
+                "n_cols": 0,
+                "fidelity": "clean",
+                "warnings": ["El archivo CSV estaba vacío."],
+            }
+
+        headers = rows_data[0]
+        for c_idx, h_val in enumerate(headers, start=1):
+            ws.cell(1, c_idx, str(h_val))
+
+        # Escribir filas con preservación tipada honesta
+        for r_idx, row in enumerate(rows_data[1:], start=2):
+            for c_idx, val in enumerate(row, start=1):
+                val_str = str(val).strip()
+                if val_str == "":
+                    ws.cell(r_idx, c_idx, None)
+                elif val_str.startswith("0") and len(val_str) > 1 and val_str.isdigit():
+                    # Código numérico con ceros a la izquierda (ej: CP, DNI, CUIT)
+                    ws.cell(r_idx, c_idx, val_str)
+                    warn_msg = f"Preservado como texto código con ceros a la izquierda: '{val_str}'"
+                    if warn_msg not in warnings and len(warnings) < 5:
+                        warnings.append(warn_msg)
+                elif val_str.lower() in ("true", "false"):
+                    ws.cell(r_idx, c_idx, val_str.lower() == "true")
+                else:
+                    try:
+                        if "." in val_str:
+                            ws.cell(r_idx, c_idx, float(val_str))
+                        else:
+                            ws.cell(r_idx, c_idx, int(val_str))
+                    except ValueError:
+                        ws.cell(r_idx, c_idx, val)
+
+        # Aplicar tabla estructurada y autofiltro
+        if headers:
+            last_col = get_column_letter(len(headers))
+            last_row = max(len(rows_data), 2)
+            _apply_table_style(ws, table_style="TableStyleMedium9", table_range=f"A1:{last_col}{last_row}")
+            for c in range(1, len(headers) + 1):
+                maxlen = max([len(str(r[c - 1])) for r in rows_data if c - 1 < len(r)] or [8])
+                ws.column_dimensions[get_column_letter(c)].width = min(max(maxlen + 3, 9), 40)
+
+        wb.save(target_out)
+        return {
+            "status": "ok",
+            "path": os.path.abspath(target_out),
+            "bytes": os.path.getsize(target_out),
+            "n_rows": len(rows_data),
+            "n_cols": len(headers),
+            "fidelity": "clean",
+            "warnings": warnings,
+        }
+
+    elif dir_clean in ("xlsx_to_csv", "excel_to_csv"):
+        wb = openpyxl.load_workbook(input_path, data_only=True)
+        if sheet and sheet.lower() == "all":
+            sheets_to_convert = wb.sheetnames
+        elif sheet:
+            if sheet not in wb.sheetnames:
+                raise ValueError(f"Hoja '{sheet}' no existe en {input_path}. Disponibles: {wb.sheetnames}")
+            sheets_to_convert = [sheet]
+        else:
+            ws_act = wb.active
+            sheets_to_convert = [ws_act.title if ws_act else wb.sheetnames[0]]
+            if len(wb.sheetnames) > 1:
+                warnings.append(
+                    f"Libro con múltiples hojas ({', '.join(wb.sheetnames)}); se exportó la activa '{sheets_to_convert[0]}'. Use sheet='all' para exportar todas."
+                )
+
+        if len(sheets_to_convert) == 1 or (not sheet or sheet.lower() != "all"):
+            target_sheet_name = sheets_to_convert[0]
+            ws = wb[target_sheet_name]
+            rows_written = 0
+            with open(target_out, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                for row in ws.iter_rows(values_only=True):
+                    if any(c is not None and str(c).strip() != "" for c in row):
+                        writer.writerow([c if c is not None else "" for c in row])
+                        rows_written += 1
+            wb.close()
+            return {
+                "status": "ok",
+                "path": os.path.abspath(target_out),
+                "bytes": os.path.getsize(target_out),
+                "n_rows": rows_written,
+                "sheet": target_sheet_name,
+                "fidelity": "clean",
+                "warnings": warnings,
+            }
+        else:
+            # sheet == 'all' con múltiples hojas
+            parent = os.path.dirname(target_out)
+            stem = Path(target_out).stem
+            gen_files = []
+            total_rows = 0
+            for s_name in sheets_to_convert:
+                ws = wb[s_name]
+                s_clean = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in s_name)
+                s_file = safe_out(os.path.join(parent, f"{stem}_{s_clean}.csv"))
+                rows_written = 0
+                with open(s_file, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    for row in ws.iter_rows(values_only=True):
+                        if any(c is not None and str(c).strip() != "" for c in row):
+                            writer.writerow([c if c is not None else "" for c in row])
+                            rows_written += 1
+                total_rows += rows_written
+                gen_files.append(os.path.abspath(s_file))
+            wb.close()
+            return {
+                "status": "ok",
+                "path": gen_files[0] if gen_files else target_out,
+                "files": gen_files,
+                "n_files": len(gen_files),
+                "n_rows": total_rows,
+                "sheets": sheets_to_convert,
+                "fidelity": "clean",
+                "warnings": warnings,
+            }
+    else:
+        raise ValueError(f"Dirección no soportada: '{direction}'. Opciones válidas: 'csv_to_xlsx', 'xlsx_to_csv'")

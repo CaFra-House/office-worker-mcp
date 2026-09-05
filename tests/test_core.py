@@ -5,8 +5,9 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from office_worker.core.templates import render_pdf
-from office_worker.core.word import create_word, edit_word
-from office_worker.core.excel import create_excel, edit_excel
+from office_worker.core.word import create_word, edit_word, mail_merge
+from office_worker.core.excel import create_excel, edit_excel, csv_excel_convert
+from office_worker.core.slides import create_pptx
 from office_worker.core.themes import load_theme, THEMES
 from office_worker.core.pdf import read_pdf, extract_tables, list_form_fields, pdf_preview, pdf_extract_structured
 from office_worker.core.security import safe_out, safe_url_fetcher
@@ -19,6 +20,8 @@ from office_worker.core.pdf_tools import (
 )
 from office_worker.core.pdf_to_excel import pdf_to_excel
 from office_worker.core.office_reader import read_office
+from office_worker.core.diff import document_diff
+from office_worker.core.compliance import scrub_metadata, protect_office, verify_pdf_signature
 from office_worker.skills import resolve_packaged_skill, install_skill, list_packaged_skills
 
 TPL = """<h1>{{ titulo }}</h1><p class="muted">{{ subtitulo }} · {{ fecha }}</p>
@@ -901,6 +904,482 @@ def test_skills_packaging_and_cli(tmp_path):
             os.environ["HOME"] = old_home
         else:
             os.environ.pop("HOME", None)
+
+
+def test_mail_merge_core(tmp_path):
+    from docx import Document
+
+    # 1. Crear plantilla .docx con placeholders {{ nombre }} y {{ ciudad }}
+    tpl_file = str(tmp_path / "plantilla_bienvenida.docx")
+    doc_tpl = Document()
+    doc_tpl.add_heading("Carta de Bienvenida", level=1)
+    doc_tpl.add_paragraph("Estimado/a {{ nombre }}, le damos la bienvenida a la sede de {{ ciudad }}.")
+    doc_tpl.save(tpl_file)
+    assert os.path.exists(tpl_file)
+
+    # 2. Dataset CSV con 3 filas
+    csv_file = str(tmp_path / "usuarios.csv")
+    csv_content = "nombre,ciudad\nAlice,Madrid\nBob,Buenos Aires\nCarlos,Lima\n"
+    with open(csv_file, "w", encoding="utf-8") as f:
+        f.write(csv_content)
+
+    # 3. Ejecutar mail_merge
+    prefix = str(tmp_path / "carta_generada")
+    res = mail_merge(template_path=tpl_file, dataset_csv=csv_file, output_prefix=prefix)
+
+    assert res["status"] == "ok"
+    assert res["n_docs"] == 3
+    assert len(res["paths"]) == 3
+    assert "nombre" in res["fields"] and "ciudad" in res["fields"]
+
+    # 4. Verificar cada docx: PK magic bytes, tamaño y sustitución de valores única por fila
+    expected_pairs = [
+        ("Alice", "Madrid"),
+        ("Bob", "Buenos Aires"),
+        ("Carlos", "Lima"),
+    ]
+
+    for idx, (path, (expected_nombre, expected_ciudad)) in enumerate(zip(res["paths"], expected_pairs), start=1):
+        assert os.path.exists(path)
+        assert os.path.getsize(path) > 300
+        with open(path, "rb") as f:
+            assert f.read(2) == b"PK", f"Documento {path} no tiene magic bytes PK de DOCX/ZIP"
+
+        doc = Document(path)
+        full_text = " ".join(p.text for p in doc.paragraphs)
+        assert expected_nombre in full_text, f"{expected_nombre} no encontrado en doc {idx}"
+        assert expected_ciudad in full_text, f"{expected_ciudad} no encontrado en doc {idx}"
+
+        # Verificar que no contiene valores de las otras filas
+        for other_n, other_c in expected_pairs:
+            if other_n != expected_nombre:
+                assert other_n not in full_text, f"Valor de otra fila '{other_n}' presente en doc {idx}"
+
+    # 5. Prueba adicional con dataset JSON y filtrado de campos
+    json_dataset = [
+        {"nombre": "Diana", "ciudad": "Bogotá", "extra": "omitir"},
+        {"nombre": "Esteban", "ciudad": "Santiago", "extra": "omitir"},
+    ]
+    res_json = mail_merge(
+        template_path=tpl_file,
+        dataset_json=json_dataset,
+        output_prefix=str(tmp_path / "json_carta"),
+        fields=["nombre", "ciudad"],
+    )
+    assert res_json["status"] == "ok"
+    assert res_json["n_docs"] == 2
+    assert "extra" not in res_json["fields"]
+
+
+def test_read_office_markdown_and_json(tmp_path):
+    from docx import Document
+    import openpyxl
+
+    # 1. DOCX con Heading + Tabla -> formato markdown y backward compatibility
+    docx_file = str(tmp_path / "informe_test.docx")
+    doc = Document()
+    doc.add_heading("Resumen Ejecutivo 2026", level=1)
+    doc.add_paragraph("Este es un párrafo introductorio con detalles de gestión.")
+    tbl = doc.add_table(rows=2, cols=2)
+    tbl.rows[0].cells[0].text = "Indicador"
+    tbl.rows[0].cells[1].text = "Resultado"
+    tbl.rows[1].cells[0].text = "EBITDA"
+    tbl.rows[1].cells[1].text = "+24%"
+    doc.save(docx_file)
+
+    # Formato Markdown
+    res_md = read_office(docx_file, format="markdown")
+    assert res_md["status"] == "ok"
+    assert res_md["format"] == "markdown"
+    assert "# Resumen Ejecutivo 2026" in res_md["content"]
+    assert "| Indicador | Resultado |" in res_md["content"]
+    assert "| --- | --- |" in res_md["content"]
+    assert "| EBITDA | +24% |" in res_md["content"]
+
+    # Formato JSON (default backward compatibility)
+    res_json = read_office(docx_file)
+    assert res_json["status"] == "ok"
+    assert res_json["format"] == "docx"
+    assert res_json["n_paragraphs"] >= 2
+    assert res_json["n_tables"] == 1
+    assert "Resumen Ejecutivo 2026" in res_json["text"]
+
+    # 2. XLSX con tabla -> formato markdown por hoja
+    xlsx_file = str(tmp_path / "metricas_test.xlsx")
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Ventas_Q1"
+    ws.append(["Producto", "Ingresos"])
+    ws.append(["Suscripcion", 50000])
+    ws.append(["Servicios", 25000])
+    wb.save(xlsx_file)
+
+    res_xlsx_md = read_office(xlsx_file, format="markdown")
+    assert res_xlsx_md["status"] == "ok"
+    assert res_xlsx_md["format"] == "markdown"
+    assert "## Ventas_Q1" in res_xlsx_md["content"]
+    assert "| Producto | Ingresos |" in res_xlsx_md["content"]
+    assert "| --- | --- |" in res_xlsx_md["content"]
+    assert "| Suscripcion | 50000 |" in res_xlsx_md["content"]
+
+    # XLSX formato default JSON
+    res_xlsx_json = read_office(xlsx_file)
+    assert res_xlsx_json["status"] == "ok"
+    assert res_xlsx_json["format"] == "xlsx"
+    assert res_xlsx_json["n_sheets"] == 1
+    assert res_xlsx_json["sheets"][0]["name"] == "Ventas_Q1"
+
+
+def test_create_pptx_with_charts_core(tmp_path):
+    from pptx import Presentation
+
+    pptx_file = str(tmp_path / "presentacion_graficos.pptx")
+    slides = [
+        {
+            "title": "Portada Corporativa",
+            "kicker": "The Office Worker v0.7.0",
+            "bullets": ["Agenda", "Métricas del Ejercicio"],
+        },
+        {
+            "title": "Ventas Trimestrales",
+            "kicker": "Rendimiento",
+            "chart": {
+                "type": "bar",
+                "title": "Facturación por Trimestre",
+                "categories": ["Q1", "Q2", "Q3", "Q4"],
+                "values": [120, 160, 210, 280],
+            },
+        },
+        {
+            "title": "Distribución de Mercado",
+            "chart": {
+                "type": "pie",
+                "title": "Participación",
+                "categories": ["Producto A", "Producto B", "Otros"],
+                "values": [50, 30, 20],
+            },
+        },
+    ]
+
+    out_path = create_pptx(pptx_file, slides=slides, theme="corporate-blue")
+    assert os.path.exists(out_path)
+    assert os.path.getsize(out_path) > 3000
+
+    # Recargar presentación y verificar que contiene gráficos DrawingML nativos
+    prs = Presentation(out_path)
+    assert len(prs.slides) == 3
+
+    # Diapositiva 2 debe tener gráfico nativo (GraphicFrame con has_chart=True)
+    slide2 = prs.slides[1]
+    chart_shapes = [s for s in slide2.shapes if s.has_chart]
+    assert len(chart_shapes) >= 1, "La diapositiva 2 no contiene un shape de tipo gráfico"
+    chart_shape = chart_shapes[0]
+    assert chart_shape.__class__.__name__ == "GraphicFrame", f"Shape no es GraphicFrame: {type(chart_shape)}"
+    assert chart_shape.chart.has_title
+    assert "Facturación por Trimestre" in chart_shape.chart.chart_title.text_frame.text
+
+    # Diapositiva 3 debe tener gráfico de torta nativo
+    slide3 = prs.slides[2]
+    pie_shapes = [s for s in slide3.shapes if s.has_chart]
+    assert len(pie_shapes) >= 1, "La diapositiva 3 no contiene un shape de tipo gráfico"
+    assert pie_shapes[0].__class__.__name__ == "GraphicFrame"
+
+
+def test_csv_excel_convert_roundtrip_core(tmp_path):
+    # 1. Crear archivo CSV de prueba con variedad de tipos y posibles ambigüedades
+    csv_in = str(tmp_path / "datos_origen.csv")
+    csv_content = (
+        "id,producto,precio,stock,codigo_postal\n"
+        "1,Servidor Cloud,1500.5,3,01425\n"
+        "2,Licencia MCP,250.0,10,01428\n"
+        "3,Soporte Anual,800.0,5,01430\n"
+    )
+    with open(csv_in, "w", encoding="utf-8") as f:
+        f.write(csv_content)
+
+    xlsx_out = str(tmp_path / "convertido.xlsx")
+
+    # 2. Conversión CSV -> XLSX
+    res_xlsx = csv_excel_convert(csv_in, xlsx_out, direction="csv_to_xlsx", sheet="Inventario")
+    assert res_xlsx["status"] == "ok"
+    assert os.path.exists(res_xlsx["path"])
+    assert res_xlsx["n_rows"] == 4
+    assert res_xlsx["n_cols"] == 5
+
+    # Verificar magic bytes PK del archivo Excel generado
+    with open(res_xlsx["path"], "rb") as f:
+        assert f.read(2) == b"PK", "El archivo Excel generado no tiene cabecera ZIP/PK"
+
+    # Verificar presencia de advertencia honesta sobre código con ceros a la izquierda
+    assert any("01425" in w for w in res_xlsx.get("warnings", [])), "Falta warning honesto sobre ceros a la izquierda"
+
+    # 3. Conversión XLSX -> CSV (Roundtrip)
+    csv_roundtrip = str(tmp_path / "roundtrip.csv")
+    res_csv = csv_excel_convert(res_xlsx["path"], csv_roundtrip, direction="xlsx_to_csv")
+    assert res_csv["status"] == "ok"
+    assert os.path.exists(res_csv["path"])
+    assert res_csv["n_rows"] == 4
+
+    with open(csv_roundtrip, "r", encoding="utf-8") as f:
+        rt_content = f.read()
+
+    # Comprobar que no se perdieron datos numéricos ni strings con ceros
+    assert "01425" in rt_content, "Se perdió el código con ceros a la izquierda '01425'"
+    assert "1500.5" in rt_content or "1500.50" in rt_content, "Se corrompió el float 1500.5"
+    assert "Servidor Cloud" in rt_content
+    assert "3" in rt_content
+
+    # 4. Multi-sheet export con sheet='all'
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws1 = wb.active; ws1.title = "Ventas"; ws1.append(["A", "1"]); ws1.append(["B", "2"])
+    ws2 = wb.create_sheet("Gastos"); ws2.append(["C", "3"]); ws2.append(["D", "4"])
+    multi_xlsx = str(tmp_path / "multi.xlsx")
+    wb.save(multi_xlsx)
+
+    res_all = csv_excel_convert(multi_xlsx, str(tmp_path / "export_all.csv"), direction="xlsx_to_csv", sheet="all")
+    assert res_all["status"] == "ok"
+    assert res_all["n_files"] == 2
+    for f_csv in res_all["files"]:
+        assert os.path.exists(f_csv)
+
+
+def test_document_diff_core(tmp_path):
+    # 1. Crear documento A y B en formato .docx
+    doc_a = str(tmp_path / "doc_a.docx")
+    doc_b = str(tmp_path / "doc_b.docx")
+
+    create_word(doc_a, title="Acuerdo Marco", blocks=[
+        {"type": "p", "text": "Cláusula 1: Definiciones generales."},
+        {"type": "p", "text": "Cláusula 2: Obligaciones a ser suprimidas."},
+        {"type": "p", "text": "Cláusula 3: Jurisdicción y ley aplicable."},
+    ])
+
+    create_word(doc_b, title="Acuerdo Marco", blocks=[
+        {"type": "p", "text": "Cláusula 1: Definiciones generales."},
+        {"type": "p", "text": "Cláusula 2: Nueva obligación de auditoría agregada."},
+        {"type": "p", "text": "Cláusula 3: Jurisdicción y ley aplicable."},
+    ])
+
+    # 2. Diff en JSON
+    diff_json = document_diff(doc_a, doc_b, format="json")
+    assert diff_json["status"] == "ok"
+    assert diff_json["has_changes"] is True
+    assert diff_json["summary"]["modified"] == 1
+    assert diff_json["summary"]["unchanged"] >= 2
+    assert any("textual" in w.lower() for w in diff_json["warnings"])
+    assert any("legal-grade" in w.lower() for w in diff_json["warnings"])
+
+    # 3. Diff con párrafo agregado y eliminado por separado
+    doc_c = str(tmp_path / "doc_c.docx")
+    create_word(doc_c, title="Acuerdo Marco", blocks=[
+        {"type": "p", "text": "Cláusula 1: Definiciones generales."},
+        {"type": "p", "text": "Cláusula 3: Jurisdicción y ley aplicable."},
+        {"type": "p", "text": "Cláusula 4: Anexo confidencial nuevo."},
+    ])
+    diff_del_add = document_diff(doc_a, doc_c, format="markdown")
+    assert diff_del_add["status"] == "ok"
+    assert diff_del_add["summary"]["deleted"] == 1
+    assert diff_del_add["summary"]["added"] == 1
+    assert "diff_markdown" in diff_del_add
+    assert "[Deleted]" in diff_del_add["diff_markdown"]
+    assert "[Added]" in diff_del_add["diff_markdown"]
+
+    # 4. Documentos idénticos
+    diff_same = document_diff(doc_a, doc_a)
+    assert diff_same["has_changes"] is False
+    assert diff_same["summary"]["added"] == 0
+    assert diff_same["summary"]["deleted"] == 0
+    assert diff_same["summary"]["modified"] == 0
+
+
+def test_scrub_metadata_core(tmp_path):
+    import fitz
+    import docx
+    import openpyxl
+    from pptx import Presentation
+
+    # 1. Scrub PDF
+    pdf_in = str(tmp_path / "doc_meta.pdf")
+    render_pdf("<h1>Documento con Autor</h1>", pdf_in)
+    doc_pdf = fitz.open(pdf_in)
+    doc_pdf.set_metadata({"author": "Julio Cardozo", "title": "Confidencial", "subject": "Auditoria"})
+    doc_pdf.save(pdf_in + ".tmp")
+    doc_pdf.close()
+    os.replace(pdf_in + ".tmp", pdf_in)
+
+    pdf_out = str(tmp_path / "doc_scrubbed.pdf")
+    res_pdf = scrub_metadata(pdf_in, pdf_out)
+    assert res_pdf["status"] == "ok"
+    assert os.path.exists(res_pdf["path"])
+    assert open(res_pdf["path"], "rb").read(5) == b"%PDF-"
+    doc_check = fitz.open(res_pdf["path"])
+    assert doc_check.metadata.get("author") == ""
+    assert doc_check.metadata.get("title") == ""
+    doc_check.close()
+
+    # 2. Scrub DOCX
+    docx_in = str(tmp_path / "doc_meta.docx")
+    d = docx.Document()
+    d.add_paragraph("Texto del contrato con autoría.")
+    d.core_properties.author = "Julio Cardozo"
+    d.core_properties.title = "Contrato Secreto"
+    d.core_properties.last_modified_by = "Elena Rostova"
+    d.save(docx_in)
+
+    docx_out = str(tmp_path / "doc_scrubbed.docx")
+    res_docx = scrub_metadata(docx_in, docx_out)
+    assert res_docx["status"] == "ok"
+    assert os.path.exists(res_docx["path"])
+    assert open(res_docx["path"], "rb").read(2) == b"PK"
+    d_check = docx.Document(res_docx["path"])
+    assert d_check.core_properties.author == ""
+    assert d_check.core_properties.last_modified_by == ""
+    assert d_check.core_properties.title == ""
+    assert len(d_check.paragraphs) == 1
+    assert "Texto del contrato con autoría." in d_check.paragraphs[0].text
+
+    # 3. Scrub XLSX
+    xlsx_in = str(tmp_path / "sheet_meta.xlsx")
+    wb = openpyxl.Workbook()
+    wb.properties.creator = "Julio Cardozo"
+    wb.properties.title = "Balance"
+    wb.save(xlsx_in)
+
+    xlsx_out = str(tmp_path / "sheet_scrubbed.xlsx")
+    res_xlsx = scrub_metadata(xlsx_in, xlsx_out)
+    assert res_xlsx["status"] == "ok"
+    wb_check = openpyxl.load_workbook(res_xlsx["path"])
+    assert wb_check.properties.creator is None or wb_check.properties.creator == ""
+    wb_check.close()
+
+    # 4. Scrub PPTX
+    pptx_in = str(tmp_path / "slide_meta.pptx")
+    prs = Presentation()
+    prs.core_properties.author = "Julio Cardozo"
+    prs.save(pptx_in)
+
+    pptx_out = str(tmp_path / "slide_scrubbed.pptx")
+    res_pptx = scrub_metadata(pptx_in, pptx_out)
+    assert res_pptx["status"] == "ok"
+    prs_check = Presentation(res_pptx["path"])
+    assert prs_check.core_properties.author == ""
+
+
+def test_protect_office_core(tmp_path):
+    import msoffcrypto
+    import openpyxl
+    import docx
+    from zipfile import BadZipFile
+
+    # 1. Proteger XLSX con contraseña
+    xlsx_in = str(tmp_path / "financiero.xlsx")
+    create_excel(xlsx_in, title="Finanzas Q3", sheets=[
+        {"name": "Resumen", "headers": ["Concepto", "Total"], "rows": [["Ventas", 50000]]}
+    ])
+
+    xlsx_protected = str(tmp_path / "financiero_protegido.xlsx")
+    res = protect_office(xlsx_in, xlsx_protected, password="MiClaveSegura2026!")
+    assert res["status"] == "ok"
+    assert os.path.exists(res["path"])
+    assert res["encrypted"] is True
+    assert res["bytes"] > 0
+
+    # Abrir sin clave DEBE fallar
+    with pytest.raises(BadZipFile):
+        openpyxl.load_workbook(res["path"])
+
+    # Descifrar con clave correcta DEBE tener éxito
+    with open(res["path"], "rb") as f:
+        of = msoffcrypto.OfficeFile(f)
+        assert of.is_encrypted() is True
+        of.load_key(password="MiClaveSegura2026!")
+        dec_path = str(tmp_path / "financiero_descifrado.xlsx")
+        with open(dec_path, "wb") as df:
+            of.decrypt(df)
+
+    wb_dec = openpyxl.load_workbook(dec_path)
+    # Row 1 is Title, Row 2 is Headers, Row 3 is Data
+    assert wb_dec["Resumen"]["A3"].value == "Ventas"
+    assert wb_dec["Resumen"]["B3"].value == 50000
+    wb_dec.close()
+
+    # 2. Proteger DOCX
+    docx_in = str(tmp_path / "contrato.docx")
+    create_word(docx_in, title="Contrato", blocks=[{"type": "p", "text": "Cláusula secreta."}])
+    docx_protected = str(tmp_path / "contrato_protegido.docx")
+    res_docx = protect_office(docx_in, docx_protected, password="DocxPass2026!")
+    assert res_docx["status"] == "ok"
+
+    with pytest.raises(Exception):
+        docx.Document(docx_protected)
+
+
+def test_verify_pdf_signature_core(tmp_path):
+    import datetime
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from office_worker.core.pdf_tools import sign_pdf
+
+    # 1. PDF sin firma
+    pdf_unsigned = str(tmp_path / "no_firma.pdf")
+    render_pdf("<h1>Documento sin Firma</h1>", pdf_unsigned)
+    res_un = verify_pdf_signature(pdf_unsigned)
+    assert res_un["status"] == "ok"
+    assert res_un["has_signature"] is False
+    assert res_un["valid"] is False
+    assert any("no digital signatures" in w.lower() for w in res_un["warnings"])
+
+    # 2. Generar certificado y clave PEM
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, "Julio Cardozo Auditor"),
+    ])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+
+    cert_pem_path = str(tmp_path / "cert_audit.pem")
+    with open(cert_pem_path, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
+        f.write(key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ))
+
+    # 3. Firmar PDF con sign_pdf
+    pdf_signed = str(tmp_path / "con_firma.pdf")
+    sign_pdf(
+        pdf_unsigned,
+        pdf_signed,
+        cert_pem=cert_pem_path,
+        reason="Aprobación Auditoría v0.8.0",
+        location="Buenos Aires",
+    )
+    assert os.path.exists(pdf_signed)
+
+    # 4. Verificar firma con verify_pdf_signature
+    res_ver = verify_pdf_signature(pdf_signed)
+    assert res_ver["status"] == "ok"
+    assert res_ver["has_signature"] is True
+    assert res_ver["valid"] is True
+    assert res_ver["intact"] is True
+    assert res_ver["signatures_count"] >= 1
+    assert "Julio Cardozo Auditor" in (res_ver["signer"] or "")
+    assert res_ver["reason"] == "Aprobación Auditoría v0.8.0"
+    assert res_ver["location"] == "Buenos Aires"
+    assert any("self-signed" in w.lower() for w in res_ver["warnings"])
+
 
 
 
