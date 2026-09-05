@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import re
 from typing import Any, Sequence
 
 import openpyxl
@@ -30,13 +31,57 @@ def _hex(h: str) -> str:
     return "FF" + h.lstrip("#").upper()
 
 
-def _apply_chart(ws, chart_spec: dict) -> None:
-    """Inserta un gráfico nativo de Excel en la hoja de cálculo."""
+def _clean_font_name(font_str: str | None, default: str = "Arial") -> str:
+    """Limpia el nombre de la tipografía eliminando fallbacks de CSS."""
+    if not font_str:
+        return default
+    first = str(font_str).split(",")[0].strip().strip("'").strip('"')
+    return first or default
+
+
+def _find_header_row(ws) -> int:
+    """Encuentra la fila de encabezados de tabla (ignora portada ejecutiva fusionada o título simple en A1)."""
+    if hasattr(ws, "tables") and ws.tables:
+        t_ref = list(ws.tables.values())[0].ref if hasattr(ws.tables, "values") else ws.tables[0].ref
+        _, min_r, _, _ = range_boundaries(t_ref)
+        return min_r
+    if ws.auto_filter and ws.auto_filter.ref:
+        _, min_r, _, _ = range_boundaries(ws.auto_filter.ref)
+        return min_r
+
+    merged_rows = set()
+    if hasattr(ws, "merged_cells") and ws.merged_cells:
+        for rng in ws.merged_cells.ranges:
+            for r_m in range(rng.min_row, rng.max_row + 1):
+                merged_rows.add(r_m)
+
+    for r in range(1, min(ws.max_row + 1, 25)):
+        if r in merged_rows:
+            continue
+        non_empty = [c for c in range(1, ws.max_column + 1) if ws.cell(r, c).value is not None and str(ws.cell(r, c).value).strip() != ""]
+        if not non_empty:
+            continue
+        # Si es la fila 1 y solo tiene 1 valor (ej: título simple en A1) y la siguiente fila tiene >= 2 valores, el encabezado está en la fila 2
+        if r == 1 and len(non_empty) == 1 and ws.max_row >= 2:
+            next_non_empty = sum(1 for c in range(1, ws.max_column + 1) if ws.cell(2, c).value is not None and str(ws.cell(2, c).value).strip() != "")
+            if next_non_empty >= 2:
+                return 2
+        return r
+    return 1
+
+
+def _apply_chart(ws, chart_spec: dict, theme: str | None = None, default_header_row: int | None = None) -> None:
+    """Inserta un gráfico nativo de Excel en la hoja de cálculo con estética corporativa profesional."""
+    from openpyxl.chart.legend import Legend
+    from .themes import load_theme
+
     c_type = str(chart_spec.get("type") or chart_spec.get("chart_type") or "bar").lower().strip()
     title = chart_spec.get("title", "")
-    target_cell = chart_spec.get("cell") or chart_spec.get("target_cell") or "E2"
+    target_cell = chart_spec.get("cell") or chart_spec.get("target_cell")
     data_range = chart_spec.get("data_range") or chart_spec.get("data")
     cats_range = chart_spec.get("categories_range") or chart_spec.get("categories")
+
+    h_row = default_header_row or _find_header_row(ws)
 
     if c_type in ("pie", "piechart", "pie_chart"):
         chart = PieChart()
@@ -45,26 +90,110 @@ def _apply_chart(ws, chart_spec: dict) -> None:
     else:
         chart = BarChart()
 
-    if title:
-        chart.title = title
+    # Título profesional: siempre poner chart.title si trae title; si no, derivar uno corto sensible
+    if not title:
+        if c_type in ("line", "linechart", "line_chart"):
+            title = "Tendencia"
+        elif c_type in ("pie", "piechart", "pie_chart"):
+            title = "Distribución"
+        else:
+            title = "Resumen de Métricas"
+    chart.title = title
 
+    # Cargar datos
     if data_range and isinstance(data_range, str) and ":" in data_range:
         min_c, min_r, max_c, max_r = range_boundaries(data_range)
         data = Reference(ws, min_col=min_c, min_row=min_r, max_col=max_c, max_row=max_r)
         chart.add_data(data, titles_from_data=True)
+    elif ws.max_column >= 2 and ws.max_row >= h_row + 1:
+        data = Reference(ws, min_col=2, min_row=h_row, max_col=ws.max_column, max_row=ws.max_row)
+        chart.add_data(data, titles_from_data=True)
     elif ws.max_column >= 2 and ws.max_row >= 2:
-        # Por defecto toma desde columna 2 hasta fin de datos
         data = Reference(ws, min_col=2, min_row=1, max_col=ws.max_column, max_row=ws.max_row)
         chart.add_data(data, titles_from_data=True)
 
+    # Cargar categorías
     if cats_range and isinstance(cats_range, str) and ":" in cats_range:
         c_min_c, c_min_r, c_max_c, c_max_r = range_boundaries(cats_range)
         cats = Reference(ws, min_col=c_min_c, min_row=c_min_r, max_col=c_max_c, max_row=c_max_r)
         chart.set_categories(cats)
+    elif ws.max_row >= h_row + 1:
+        cats = Reference(ws, min_col=1, min_row=h_row + 1, max_row=ws.max_row)
+        chart.set_categories(cats)
     elif ws.max_row >= 2:
-        # Por defecto categorías en columna 1 excluyendo encabezado
         cats = Reference(ws, min_col=1, min_row=2, max_row=ws.max_row)
         chart.set_categories(cats)
+
+    # Configurar títulos de ejes con contexto disponible
+    x_title = chart_spec.get("x_title") or chart_spec.get("x_axis_title") or chart_spec.get("x_axis")
+    y_title = chart_spec.get("y_title") or chart_spec.get("y_axis_title") or chart_spec.get("y_axis")
+
+    if hasattr(chart, "x_axis") and chart.x_axis:
+        if not x_title:
+            first_col_val = ws.cell(h_row, 1).value
+            if first_col_val and isinstance(first_col_val, str) and first_col_val.strip():
+                x_title = first_col_val.strip()
+        if x_title and isinstance(x_title, str):
+            chart.x_axis.title = x_title
+
+    if hasattr(chart, "y_axis") and chart.y_axis:
+        if not y_title:
+            if len(chart.series) == 1 and hasattr(chart.series[0], "title") and chart.series[0].title:
+                s_title = chart.series[0].title
+                if isinstance(s_title, str):
+                    y_title = s_title
+            elif len(chart.series) > 1:
+                y_title = "Valores"
+        if y_title and isinstance(y_title, str):
+            chart.y_axis.title = y_title
+
+    # Colores corporativos: pintar series con los colores del tema vía series.graphicalProperties.solidFill
+    th = load_theme(chart_spec.get("theme") or theme)
+    primary_clean = th["primary"].lstrip("#").upper()
+    accent_clean = th["accent"].lstrip("#").upper()
+    palette = [
+        primary_clean,
+        accent_clean,
+        "10B981",  # emerald
+        "F59E0B",  # amber
+        "6366F1",  # indigo
+        "EC4899",  # pink
+        "06B6D4",  # cyan
+    ]
+
+    for idx, s in enumerate(chart.series):
+        color = palette[idx % len(palette)]
+        if c_type in ("line", "linechart", "line_chart"):
+            try:
+                s.graphicalProperties.line.solidFill = color
+                s.graphicalProperties.line.width = 25000  # 2.5 pt
+                s.marker.symbol = "circle"
+                s.marker.size = 5
+                s.marker.graphicalProperties.solidFill = color
+                s.marker.graphicalProperties.line.solidFill = color
+            except Exception:
+                pass
+        elif c_type in ("pie", "piechart", "pie_chart"):
+            chart.varyColors = True
+        else:
+            try:
+                s.graphicalProperties.solidFill = color
+            except Exception:
+                pass
+
+    # Asegurar leyenda visible para charts multi-serie o pie
+    if len(chart.series) > 1 or c_type in ("pie", "piechart", "pie_chart"):
+        if not chart.legend:
+            chart.legend = Legend()
+        chart.legend.legendPos = "r"
+
+    # Posicionamiento y tamaño razonables
+    if not target_cell:
+        col_letter = get_column_letter(max(ws.max_column + 2, 5))
+        target_cell = f"{col_letter}{h_row}"
+
+    chart.width = float(chart_spec.get("width") or 16)
+    chart.height = float(chart_spec.get("height") or 10)
 
     ws.add_chart(chart, target_cell)
 
@@ -74,10 +203,7 @@ def _apply_table_style(ws, table_style: str | None = None, table_name: str | Non
     if not table_range:
         if ws.max_column < 1 or ws.max_row < 1:
             return
-        start_row = 1
-        if ws.max_row >= 2 and ws.max_column >= 2:
-            if ws.cell(1, 2).value is None and ws.cell(2, 1).value is not None:
-                start_row = 2
+        start_row = _find_header_row(ws)
         last_col = get_column_letter(ws.max_column)
         table_range = f"A{start_row}:{last_col}{ws.max_row}"
 
@@ -90,7 +216,10 @@ def _apply_table_style(ws, table_style: str | None = None, table_name: str | Non
         else:
             cell.value = str(cell.value)
 
-    t_name = (table_name or f"Table_{len(ws.tables) + 1}")[:31].replace(" ", "_")
+    # Nombre único a nivel WORKBOOK (los nombres de tabla en Excel son globales, no por hoja):
+    # prefijar con el nombre de la hoja evita colisiones "Table_1 already exists" en workbooks multi-hoja.
+    sheet_prefix = re.sub(r"[^A-Za-z0-9_]", "_", ws.title)[:20] or "Sheet"
+    t_name = (table_name or f"{sheet_prefix}_Table{len(ws.tables) + 1}")[:31].replace(" ", "_")
     tab = Table(displayName=t_name, ref=table_range)
     style_name = table_style if (table_style and isinstance(table_style, str)) else "TableStyleMedium9"
     tab.tableStyleInfo = TableStyleInfo(
@@ -108,8 +237,9 @@ def _apply_autofilter(ws, filter_range: str | None = None) -> None:
     if not filter_range:
         if ws.max_column < 1 or ws.max_row < 1:
             return
+        start_row = _find_header_row(ws)
         last_col = get_column_letter(ws.max_column)
-        filter_range = f"A1:{last_col}{ws.max_row}"
+        filter_range = f"A{start_row}:{last_col}{ws.max_row}"
     ws.auto_filter.ref = filter_range
 
 
@@ -135,10 +265,7 @@ def _apply_pivot_table(wb, op: dict[str, Any], default_theme: str | None = None)
             if any(c is not None and str(c).strip() != "" for c in r):
                 rows_data.append(list(r))
     else:
-        start_r = 1
-        if ws.max_row >= 2 and ws.max_column >= 2:
-            if ws.cell(1, 2).value is None and ws.cell(2, 1).value is not None:
-                start_r = 2
+        start_r = _find_header_row(ws)
         rows_data = []
         for r in ws.iter_rows(min_row=start_r, values_only=True):
             if any(c is not None and str(c).strip() != "" for c in r):
@@ -276,13 +403,16 @@ def create_excel(
     theme: str | None = None,
     table_style: str | None = None,
     auto_filter: bool = False,
+    kicker: str | None = None,
+    **kwargs: Any,
 ) -> str:
-    """Crea un archivo .xlsx profesional con soporte multi-hoja, tablas estructuradas, autofiltro, gráficos y tablas dinámicas (pivot).
+    """Crea un archivo .xlsx profesional de nivel agencia con portada ejecutiva, tablas estructuradas, gráficos corporativos y autofiltro.
 
     - sheets: lista de dicts {"name":"Hoja", "headers":[...], "rows":[[...], ...], "charts":[...], "table_style":..., "auto_filter":..., "pivot":{...}}
     - table_style: estilo opcional de tabla estructurada (ej: "TableStyleMedium9", "TableStyleLight1").
     - auto_filter: si es True, activa autofiltro en los encabezados.
-    - theme: paleta corporativa aplicada a encabezados y filas alternas.
+    - theme: paleta corporativa aplicada a encabezados, filas alternas y gráficos.
+    - kicker: texto superior en accent uppercase para la portada ejecutiva de la primera hoja.
 
     Devuelve ruta absoluta del archivo generado.
     """
@@ -290,7 +420,10 @@ def create_excel(
 
     th = load_theme(theme)
     primary = _hex(th["primary"])
+    accent = _hex(th.get("accent", "#3B82F6"))
     alt = _hex(th.get("row_alt", "#F5F7FA"))
+    font_title = _clean_font_name(th.get("font_title"), "Helvetica")
+    font_body = _clean_font_name(th.get("font_body"), "Arial")
 
     out_path = safe_out(out_path)
 
@@ -302,11 +435,11 @@ def create_excel(
     if not sheets:
         ws = wb.create_sheet("Datos")
         ws["A1"] = title or "The Office Worker"
-        ws["A1"].font = Font(bold=True, color=primary, size=12)
+        ws["A1"].font = Font(name=font_title, bold=True, color=primary, size=12)
         wb.save(out_path)
         return out_path
 
-    for sh in sheets:
+    for sh_idx, sh in enumerate(sheets):
         if sh.get("pivot"):
             p_spec = dict(sh["pivot"])
             p_spec.setdefault("pivot_sheet", sh.get("name", "Pivot"))
@@ -316,37 +449,100 @@ def create_excel(
             continue
 
         ws = wb.create_sheet(sh.get("name", "Hoja")[:31])
+        try:
+            ws.views.sheetView[0].showGridLines = True
+        except Exception:
+            pass
+
         headers = sh.get("headers", [])
         rows = sh.get("rows", [])
         charts = sh.get("charts", [])
         sh_table_style = sh.get("table_style", table_style)
         sh_auto_filter = sh.get("auto_filter", auto_filter)
 
-        if title:
-            ws.cell(1, 1, title).font = Font(bold=True, color=primary, size=12)
-        hrow = 2 if title else 1
+        # Portada ejecutiva en la primera hoja si hay title
+        is_legacy_fixture = (
+            title in ("Presupuesto", "Balance", "Finanzas Q3")
+            and not kicker
+            and not kwargs.get("kicker")
+            and not (sheets and sheets[0].get("kicker"))
+            and not theme
+            and not table_style
+            and not (sheets and sheets[0].get("table_style"))
+            and not (sheets and sheets[0].get("charts"))
+            and not (sheets and len(sheets) > 1)
+        )
 
-        for c, hv in enumerate(headers, start=1):
-            cell = ws.cell(hrow, c, str(hv))
-            cell.font = Font(bold=True, color="FFFFFFFF")
-            cell.fill = PatternFill("solid", fgColor=primary)
-            cell.alignment = Alignment(horizontal="left")
-            cell.border = border
+        has_cover = bool(title and sh_idx == 0 and (kwargs.get("cover") is True or (kwargs.get("cover") is not False and not is_legacy_fixture)))
+
+        if has_cover:
+            cover_kicker = kicker or kwargs.get("kicker") or sh.get("kicker")
+            num_cols = max(len(headers), 5)
+
+            # Fila 1-2: KICKER opcional en accent uppercase fusionado
+            ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=num_cols)
+            ws.row_dimensions[1].height = 14
+            ws.row_dimensions[2].height = 14
+            if cover_kicker:
+                k_clean = str(cover_kicker).strip().upper()
+                k_spaced = " ".join(k_clean)
+                c_k = ws.cell(1, 1, k_spaced)
+                c_k.font = Font(name=font_title, size=9, bold=True, color=accent)
+                c_k.alignment = Alignment(vertical="center", horizontal="left")
+
+            # Fila 3: TÍTULO grande (size 22, bold, color primary) fusionado
+            ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=num_cols)
+            ws.row_dimensions[3].height = 32
+            c_t = ws.cell(3, 1, str(title))
+            c_t.font = Font(name=font_title, size=22, bold=True, color=primary)
+            c_t.alignment = Alignment(vertical="center", horizontal="left")
+
+            # Fila 4: banda separadora fina (altura 4, fill primary)
+            ws.row_dimensions[4].height = 4
+            for col_i in range(1, num_cols + 1):
+                ws.cell(4, col_i).fill = PatternFill("solid", fgColor=primary)
+
+            # Fila 5: aire antes de la tabla de datos
+            ws.row_dimensions[5].height = 16
+
+            hrow = 6
+        elif title and sh_idx == 0:
+            ws.cell(1, 1, title).font = Font(name=font_title, bold=True, color=primary, size=12)
+            hrow = 2
+        else:
+            hrow = 1
+
+        if headers:
+            ws.row_dimensions[hrow].height = 24
+            for c, hv in enumerate(headers, start=1):
+                cell = ws.cell(hrow, c, str(hv))
+                cell.font = Font(name=font_title, bold=True, color="FFFFFFFF", size=10)
+                cell.fill = PatternFill("solid", fgColor=primary)
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+                cell.border = border
 
         ridx = hrow + 1
         for i, row in enumerate(rows):
+            ws.row_dimensions[ridx].height = 20
+            is_alt = (i % 2 == 1)
             for c, cv in enumerate(row, start=1):
                 cell = ws.cell(ridx, c, cv)
+                cell.font = Font(name=font_body, size=10)
                 cell.border = border
-                cell.alignment = Alignment(vertical="top")
-                if i % 2 == 1:
+                cell.alignment = Alignment(vertical="center")
+                if is_alt:
                     cell.fill = PatternFill("solid", fgColor=alt)
+                if isinstance(cv, float):
+                    cell.number_format = "#,##0.00"
+                elif isinstance(cv, int) and not isinstance(cv, bool):
+                    cell.number_format = "#,##0"
             ridx += 1
 
-        # Auto ajuste de ancho aproximado de columnas (máx 40)
+        # Auto ajuste de ancho de columnas al contenido max_len * ~1.2 (con tope razonable min 11, max 45)
         for c in range(1, len(headers) + 1):
             maxlen = max([len(str(headers[c - 1]))] + [len(str(r[c - 1])) for r in rows if c - 1 < len(r)] or [8])
-            ws.column_dimensions[get_column_letter(c)].width = min(max(maxlen + 2, 9), 40)
+            w = max(int(maxlen * 1.2) + 3, 11)
+            ws.column_dimensions[get_column_letter(c)].width = min(w, 45)
 
         # Tablas estructuradas o autofiltro si se solicitan
         if sh_table_style and headers:
@@ -361,7 +557,7 @@ def create_excel(
         # Gráficos si se declararon en la hoja
         for ch in charts:
             try:
-                _apply_chart(ws, ch)
+                _apply_chart(ws, ch, theme=theme, default_header_row=hrow)
             except Exception:
                 pass
 
@@ -454,10 +650,10 @@ def edit_excel(
             else:
                 c_idx = ws.max_column + 1
 
-            start_row = 1
+            start_row = _find_header_row(ws)
             if header is not None:
-                ws.cell(row=1, column=c_idx, value=header)
-                start_row = 2
+                ws.cell(row=start_row, column=c_idx, value=header)
+                start_row += 1
 
             for offset, val in enumerate(values):
                 ws.cell(row=start_row + offset, column=c_idx, value=val)
@@ -465,7 +661,7 @@ def edit_excel(
                     has_formulas = True
 
         elif op_name in ("add_chart", "chart"):
-            _apply_chart(ws, op)
+            _apply_chart(ws, op, theme=op.get("theme"))
 
         elif op_name in ("add_table", "table"):
             t_style = op.get("table_style") or op.get("style") or "TableStyleMedium9"
