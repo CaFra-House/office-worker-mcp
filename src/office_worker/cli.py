@@ -22,12 +22,21 @@ def main(argv=None):
     pdf = sub.add_parser("pdf"); common(pdf); pdf.add_argument("--title", default="Documento")
     pdf.add_argument("--subtitle", default=""); pdf.add_argument("--body", default="")
     pdf.add_argument("--rows", default="", help="tabla: 'H1|H2' filas separadas por ',' celdas por '|'")
+    pdf.add_argument("--design-mode", default="standard", choices=["standard", "premium"])
 
     wd = sub.add_parser("word"); common(wd); wd.add_argument("--title", default="")
     wd.add_argument("--blocks-json", default="[]")
 
     ex = sub.add_parser("excel"); common(ex); ex.add_argument("--title", default="")
     ex.add_argument("--sheets-json", default="[]")
+
+    bk = sub.add_parser("book", help="Genera libro multi-capítulo profesional (PDF/EPUB)")
+    common(bk); bk.add_argument("--title", required=True)
+    bk.add_argument("--author", default="")
+    bk.add_argument("--chapters-json", default="[]")
+    bk.add_argument("--epub", action="store_true", default=False)
+
+    doc = sub.add_parser("doctor", help="Audita capacidades del entorno y binarios del sistema")
 
     sk = sub.add_parser("skill", help="Gestión de skills empaquetadas para agentes")
     sk_sub = sk.add_subparsers(dest="skill_cmd", required=True)
@@ -38,7 +47,7 @@ def main(argv=None):
 
     a = p.parse_args(argv)
 
-    from office_worker.core import render_pdf, create_word, create_excel
+    from office_worker.core import render_pdf, create_word, create_excel, create_book, check_environment
 
     if a.cmd == "pdf":
         rows=[]; headers=[]
@@ -48,7 +57,7 @@ def main(argv=None):
         data={"titulo":a.title,"subtitulo":a.subtitle,"resumen":a.body}
         if rows: data.update({"headers":headers,"rows":rows})
         tpl="<h1>{{ titulo }}</h1><p class='muted'>{{ subtitulo }}</p>{% if resumen %}<p>{{ resumen }}</p>{% endif %}{% if tabla is defined and tabla %}{{ tabla }}{% endif %}"
-        try: _print(render_pdf(tpl,a.out,data=data,theme=a.theme)); return 0
+        try: _print(render_pdf(tpl,a.out,data=data,theme=a.theme,design_mode=a.design_mode)); return 0
         except Exception as e: print(json.dumps({"status":"error","error":str(e)})); return 1
     elif a.cmd == "word":
         try: blocks=json.loads(a.blocks_json or "[]"); _print(create_word(a.out,title=a.title,blocks=blocks,theme=a.theme)); return 0
@@ -56,6 +65,23 @@ def main(argv=None):
     elif a.cmd == "excel":
         try: sheets=json.loads(a.sheets_json or "[]"); _print(create_excel(a.out,title=a.title,sheets=sheets or None,theme=a.theme)); return 0
         except Exception as e: print(json.dumps({"status":"error","error":str(e)})); return 1
+    elif a.cmd == "book":
+        try:
+            chapters = json.loads(a.chapters_json or "[]")
+            res = create_book(a.out, title=a.title, author=a.author, chapters=chapters, theme=a.theme, epub=a.epub)
+            _print(res)
+            return 0
+        except Exception as e:
+            print(json.dumps({"status": "error", "error": str(e)}))
+            return 1
+    elif a.cmd == "doctor":
+        try:
+            res = check_environment()
+            _print(res)
+            return 0
+        except Exception as e:
+            print(json.dumps({"status": "error", "error": str(e)}))
+            return 1
     elif a.cmd == "skill":
         from office_worker.skills import install_skill, list_packaged_skills
         if a.skill_cmd == "install":

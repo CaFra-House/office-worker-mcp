@@ -36,6 +36,8 @@ from office_worker.core import (
     scrub_metadata as _scrub_metadata,
     protect_office as _protect_office,
     verify_pdf_signature as _verify_pdf_signature,
+    create_book as _create_book,
+    check_environment as _check_environment,
     load_theme, DEFAULT_THEME,
 )
 
@@ -43,9 +45,10 @@ mcp = FastMCP(
     "office-worker",
     instructions=(
         "The Office Worker: generates, edits, and secures professional office documents (PDF, Word/DOCX, Excel/XLSX, PowerPoint/PPTX) "
-        "locally with corporate styling, packaged Word templates (docxtpl), bulk mail merge, in-place edits, native Excel and PowerPoint charts, formulas, "
-        "bidirectional CSV-Excel conversion, Office-to-Markdown/JSON structured extraction, document comparison/diff, metadata scrubbing, password protection, digital signature verification, "
-        "batch pipelines, PDF processing (preview PNG, permanent redaction, structured RAG extraction, flattening, smart split, text, tables, forms, OCR, compression, signature), and Office-to-PDF conversion. "
+        "locally with corporate styling, packaged Word templates (docxtpl), bulk mail merge, multi-chapter books and EPUB (create_book), "
+        "in-place edits, Excel pivot tables (add_pivot), native charts, formulas, bidirectional CSV-Excel conversion, "
+        "Office-to-Markdown/JSON structured extraction, document comparison/diff, metadata scrubbing, password protection, digital signature verification, "
+        "environment diagnostics (environment_status), batch pipelines, PDF processing (preview PNG, permanent redaction, structured RAG extraction, flattening, smart split, text, tables, forms, OCR, compression, signature), and Office-to-PDF conversion. "
         "Choose the exact tool matching your target document format. "
         "Hard Anti-Loop Rule: if any tool call fails 2 consecutive times, STOP immediately and report the exact error to the user."
     ),
@@ -71,8 +74,9 @@ def render_document(
     footer_left: str = "",
     footer_right: str = "",
     page_numbers: bool = True,
+    design_mode: str = "standard",
 ) -> dict:
-    """Generates professional PDF document (invoice, report, executive summary, letter, balance statement) from Jinja HTML template, corporate theme, data, and design options (watermark, header logo, footers, page numbers, encryption). Returns JSON with status, absolute file path, and byte size. When to use: Use when creating polished, high-fidelity PDFs from structured data and HTML/CSS templates. When NOT to use: Do NOT use for editing existing PDF/Office files (use edit_word/edit_excel/pdf_manipulate) or when pure Office formats (.docx, .xlsx, .pptx) are required. Keywords: invoice, report, letter, contract, executive summary, balance statement, template, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    """Generates professional PDF document (invoice, report, executive summary, letter, balance statement) from Jinja HTML template, corporate theme, data, and design options (watermark, header logo, footers, page numbers, encryption, design_mode='standard'|'premium'). Returns JSON with status, absolute file path, and byte size. When to use: Use when creating polished, high-fidelity PDFs from structured data and HTML/CSS templates. When NOT to use: Do NOT use for editing existing PDF/Office files (use edit_word/edit_excel/pdf_manipulate) or when pure Office formats (.docx, .xlsx, .pptx) are required. Keywords: invoice, report, letter, contract, executive summary, balance statement, template, local, private, no api key, offline, cross-platform, deterministic, safe."""
     try:
         data = json.loads(data_json or "{}") or {}
     except json.JSONDecodeError as e:
@@ -95,6 +99,7 @@ def render_document(
                 footer_left=footer_left,
                 footer_right=footer_right,
                 page_numbers=page_numbers,
+                design_mode=design_mode or "standard",
             ),
             next_steps=["Preview visual layout with pdf_preview", "Sign document with sign_pdf"],
         )
@@ -361,10 +366,13 @@ def sign_pdf(
     output: str,
     sello_img_path: str = "",
     cert_pem: str = "",
+    key_pem: str = "",
+    passphrase: str = "",
     reason: str = "",
     location: str = "",
+    auto_generate_test_cert: bool = False,
 ) -> dict:
-    """Signs PDF documents (contract, letter, minutes, invoice): stamps visual PNG signature/seal on target page and applies cryptographic PAdES digital signature if X.509 PEM certificate is provided. Returns JSON with status, signed file path, and byte size. When to use: Use to approve, endorse, or sign official business documents. When NOT to use: Do NOT use for modifying document content (use edit_word or render_document). Keywords: sign, stamp, contract, minutes, letter, invoice, local, private, no api key, offline, cross-platform, deterministic, safe."""
+    """Signs PDF (contract, invoice, letter): stamps visual seal and applies cryptographic PAdES signature if cert_pem or auto_generate_test_cert=True. Returns JSON with status, path, bytes, next_steps. When to use: Use to sign or approve documents. When NOT to use: Do NOT use to edit content. Keywords: sign, pades, seal, contract, local, safe."""
     try:
         return _ok(
             _sign_pdf(
@@ -372,8 +380,11 @@ def sign_pdf(
                 output=output,
                 sello_img_path=sello_img_path or None,
                 cert_pem=cert_pem or None,
+                key_pem=key_pem or None,
+                passphrase=passphrase or None,
                 reason=reason or None,
                 location=location or None,
+                auto_generate_test_cert=bool(auto_generate_test_cert),
             ),
             next_steps=["Verify digital signature with verify_pdf_signature", "Preview signed document with pdf_preview"],
         )
@@ -387,7 +398,7 @@ def edit_excel(
     operations: list = [],
     output_path: str = "",
 ) -> dict:
-    """Modifies an existing Excel workbook (.xlsx / .xlsm: balance statement, financial report, audit) in place or to a new file via openpyxl, preserving styles, formatting, and VBA macros (keep_vba). Supports set_cell, append_row, add_column, add_chart (bar, line, pie), add_table, auto_filter, and formulas (SUM, SUMIF, AVERAGEIF, VLOOKUP, XLOOKUP, COUNTIFS). Returns JSON with status, path, fidelity, warnings, and operations count. When to use: Use to update existing spreadsheets without recreating them from scratch. When NOT to use: Do NOT use to build new spreadsheets from nothing (use create_excel) or to run VBA macros. Keywords: edit in place, balance statement, report, audit, formula, chart, local, private, no api key, offline, cross-platform, no office install needed, deterministic, safe."""
+    """Modifies an existing Excel workbook (.xlsx / .xlsm: balance statement, financial report, audit) in place or to a new file via openpyxl, preserving styles, formatting, and VBA macros (keep_vba). Supports set_cell, append_row, add_column, add_chart (bar, line, pie), add_table, auto_filter, add_pivot (pandas pivot tables on new sheet), and formulas (SUM, SUMIF, AVERAGEIF, VLOOKUP, XLOOKUP, COUNTIFS). Returns JSON with status, path, fidelity, warnings, and operations count. When to use: Use to update existing spreadsheets without recreating them from scratch. When NOT to use: Do NOT use to build new spreadsheets from nothing (use create_excel) or to run VBA macros. Keywords: edit in place, balance statement, report, audit, formula, chart, local, private, no api key, offline, cross-platform, no office install needed, deterministic, safe."""
     try:
         return _edit_excel(input_path, operations=operations, output_path=output_path or None)
     except Exception as e:
@@ -557,6 +568,48 @@ def verify_pdf_signature(
 
 
 @mcp.tool()
+def create_book(
+    output: str,
+    title: str,
+    author: str = "",
+    chapters: list = [],
+    theme: str = "",
+    epub: bool = False,
+) -> dict:
+    """Generates multi-chapter PDF books with cover, automatic numbered TOC with page numbers, and professional margins via WeasyPrint, with optional EPUB export via ebooklib. Returns JSON with status, path, and chapter count. When to use: Use for long multi-chapter manuals, books, or reports. When NOT to use: Do NOT use for single-page documents (use render_document). Keywords: book, epub, manual, toc, chapters, pdf, local, safe."""
+    if isinstance(chapters, str):
+        try:
+            ch_list = json.loads(chapters or "[]")
+        except json.JSONDecodeError as e:
+            return {"status": "error", "error": f"chapters JSON inválido: {e}"}
+    else:
+        ch_list = list(chapters or [])
+    try:
+        res = _create_book(
+            out_path=output,
+            title=title,
+            author=author or "",
+            chapters=ch_list,
+            theme=theme or None,
+            epub=bool(epub),
+        )
+        if isinstance(res, dict) and res.get("status") == "ok":
+            res["next_steps"] = ["Preview book layout with pdf_preview", "Inspect table of contents with read_pdf"]
+        return res
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def environment_status() -> dict:
+    """Audits system environment and reports active capabilities (LibreOffice, Tesseract OCR, WeasyPrint, PyMuPDF, Pandas) and exact installation commands for missing tools. Returns JSON with status, OS, capabilities, and install hints. When to use: Call to check installed document processing engines on host. When NOT to use: Do NOT use to process documents. Keywords: doctor, status, environment, system, check, install, diagnose, local, safe."""
+    try:
+        return _check_environment()
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
 def office_batch(
     operations: list = [],
 ) -> dict:
@@ -596,6 +649,8 @@ def office_batch(
         "scrub_metadata": scrub_metadata,
         "protect_office": protect_office,
         "verify_pdf_signature": verify_pdf_signature,
+        "create_book": create_book,
+        "environment_status": environment_status,
     }
 
     results = []

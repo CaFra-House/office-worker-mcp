@@ -220,11 +220,12 @@ def protect_office(
 
 
 def verify_pdf_signature(input_path: str) -> dict[str, Any]:
-    """Verifica firmas digitales criptográficas en un archivo PDF mediante pyhanko y pypdf.
+    """Verifica firmas digitales criptográficas en un archivo PDF mediante pyhanko, PyMuPDF y pypdf.
 
-    Inspecciona si el documento contiene campos de firma, si la integridad criptográfica
-    (digest) está intacta, extrae el firmante (Common Name del certificado X.509), fecha,
-    motivo y ubicación, reportando advertencias honestas sobre cadenas de confianza.
+    Inspecciona si el documento contiene firmas digitales PAdES/PKCS#7 o campos de firma en AcroForm/SigFlags.
+    Si la verificación criptográfica se completa, retorna valid=True/False (según digest y certificados).
+    Si se detecta presencia de firma pero no es posible la verificación criptográfica completa, retorna
+    valid=None con una advertencia honesta. Para PDFs sin firma, retorna has_signature=False y valid=False.
 
     - input_path: ruta al archivo PDF a auditar.
 
@@ -235,8 +236,8 @@ def verify_pdf_signature(input_path: str) -> dict[str, Any]:
         raise FileNotFoundError(f"Archivo PDF no encontrado: {input_path}")
 
     has_signature = False
-    is_valid = False
-    is_intact = False
+    is_valid: bool | None = False
+    is_intact: bool | None = False
     signer_name = None
     sig_date = None
     reason = None
@@ -280,28 +281,79 @@ def verify_pdf_signature(input_path: str) -> dict[str, Any]:
                     if status.summary() and "UNTRUSTED" in status.summary():
                         warnings.append("Certificate is self-signed or not anchored in a trusted system certificate authority.")
                 except Exception as ve:
-                    warnings.append(f"Validation inspection note: {ve}")
-            else:
-                has_signature = False
-                is_valid = False
-                warnings.append("Document has no digital signatures.")
+                    is_valid = None
+                    is_intact = None
+                    warnings.append(f"Cryptographic verification inspection note: {ve}. Signature presence confirmed.")
+    except Exception:
+        pass
 
-    except Exception as e:
-        # Fallback de inspección vía pypdf
+    if not has_signature:
+        # Inspección de presencia vía PyMuPDF (fitz: get_sigflags, widgets, annots)
+        try:
+            import fitz
+            doc = fitz.open(input_path)
+            sig_flags = doc.get_sigflags()
+            fitz_sig_count = 0
+            for page in doc:
+                for w in page.widgets():
+                    if w.field_type == fitz.PDF_WIDGET_TYPE_SIGNATURE:
+                        fitz_sig_count += 1
+                        if not signer_name and w.field_value:
+                            signer_name = str(w.field_value)
+            doc.close()
+            if sig_flags > 0 or fitz_sig_count > 0:
+                has_signature = True
+                signatures_count = max(signatures_count, fitz_sig_count, 1)
+                is_valid = None
+                is_intact = None
+                warnings.append("Signature presence detected via PyMuPDF (SigFlags/AcroForm), but cryptographic validation unavailable.")
+        except Exception:
+            pass
+
+    if not has_signature:
+        # Inspección de presencia vía pypdf (AcroForm, /FT /Sig, trailer)
         try:
             import pypdf
             r = pypdf.PdfReader(input_path)
             fields = r.get_fields() or {}
-            sig_fields = [k for k, v in fields.items() if v.get("/FT") == "/Sig"]
+            sig_fields = [k for k, v in fields.items() if isinstance(v, dict) and v.get("/FT") == "/Sig"]
+            if not sig_fields:
+                root = r.trailer.get("/Root", {})
+                if hasattr(root, "get_object"):
+                    root = root.get_object()
+                acro = root.get("/AcroForm", {}) if isinstance(root, dict) else {}
+                if hasattr(acro, "get_object"):
+                    acro = acro.get_object()
+                if isinstance(acro, dict) and (acro.get("/SigFlags", 0) > 0 or "/Signatures" in acro):
+                    sig_fields = ["AcroFormSig"]
             if sig_fields:
                 has_signature = True
-                signatures_count = len(sig_fields)
-                warnings.append(f"Detected {len(sig_fields)} signature field(s), but pyhanko parser encountered: {e}")
-            else:
-                has_signature = False
-                warnings.append("Document has no digital signatures.")
-        except Exception as e2:
-            warnings.append(f"Failed to inspect PDF signatures: {e2}")
+                signatures_count = max(signatures_count, len(sig_fields))
+                is_valid = None
+                is_intact = None
+                warnings.append("Signature presence detected via pypdf AcroForm/Sig structures, but cryptographic validation unavailable.")
+                for sf_name in sig_fields:
+                    sf = fields.get(sf_name)
+                    if isinstance(sf, dict):
+                        v = sf.get("/V", {})
+                        if hasattr(v, "get_object"):
+                            v = v.get_object()
+                        if isinstance(v, dict):
+                            if not reason and v.get("/Reason"):
+                                reason = str(v.get("/Reason"))
+                            if not location and v.get("/Location"):
+                                location = str(v.get("/Location"))
+                            if not sig_date and v.get("/M"):
+                                sig_date = str(v.get("/M"))
+                            if not signer_name and v.get("/Name"):
+                                signer_name = str(v.get("/Name"))
+        except Exception:
+            pass
+
+    if not has_signature:
+        is_valid = False
+        is_intact = False
+        warnings.append("Document has no digital signatures.")
 
     return {
         "status": "ok",

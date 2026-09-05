@@ -451,8 +451,9 @@ def sign_pdf(
     reason: str | None = None,
     location: str | None = None,
     page: int = -1,
+    auto_generate_test_cert: bool = False,
 ) -> str:
-    """Firma un documento PDF: estampa sello PNG visible y aplica firma digital criptográfica si hay certificado.
+    """Firma un documento PDF: estampa sello PNG visible y aplica firma digital criptográfica PAdES si hay certificado.
 
     - input_pdf: ruta al archivo PDF a firmar.
     - output: ruta donde se guardará el PDF firmado.
@@ -463,11 +464,14 @@ def sign_pdf(
     - reason: motivo de la firma (ej: 'Aprobado', 'Conforme').
     - location: ubicación geográfica de la firma.
     - page: índice de página donde estampar el sello visual (0-indexed, default -1 para última página).
+    - auto_generate_test_cert: si es True y no se provee cert_pem, genera un certificado autofirmado
+      efímero para pruebas/demo (marcado explícitamente como Non-Production) permitiendo cerrar el ciclo sign->verify.
 
     Limitación honesta:
     El sello PNG visible se estampa siempre sobre la página indicada. La firma digital criptográfica
-    PKCS#7/PAdES requiere obligatoriamente un certificado X.509 válido provisto en cert_pem.
-    Si no se dispone de certificado, el documento se genera con el sello visual estampado.
+    PKCS#7/PAdES requiere un certificado X.509 provisto en cert_pem (o auto_generate_test_cert=True para tests).
+    Si no se dispone de certificado ni se activa auto_generate_test_cert, el documento se genera con el sello
+    visual estampado sin firma criptográfica.
     Devuelve la ruta absoluta del PDF firmado.
     """
     import fitz
@@ -501,6 +505,10 @@ def sign_pdf(
         )
         target_page.insert_image(r, filename=sello_file)
 
+    ephemeral_cert_path = None
+    cert_file = None
+    key_file = None
+
     if cert_pem:
         cert_file = os.path.abspath(os.path.expanduser(str(cert_pem)))
         if not os.path.exists(cert_file):
@@ -510,7 +518,41 @@ def sign_pdf(
         if not os.path.exists(key_file):
             doc.close()
             raise FileNotFoundError(f"Clave privada PEM no encontrada: {key_file}")
+    elif auto_generate_test_cert:
+        import datetime
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
 
+        test_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        test_subject = test_issuer = x509.Name([
+            x509.NameAttribute(NameOID.COMMON_NAME, "Office Worker Test Certificate (Non-Production)"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Office Worker MCP Test"),
+        ])
+        test_cert = (
+            x509.CertificateBuilder()
+            .subject_name(test_subject)
+            .issuer_name(test_issuer)
+            .public_key(test_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5))
+            .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1))
+            .sign(test_key, hashes.SHA256())
+        )
+        tmp_pem = tempfile.NamedTemporaryFile(suffix=".pem", delete=False)
+        tmp_pem.write(test_cert.public_bytes(serialization.Encoding.PEM))
+        tmp_pem.write(test_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ))
+        tmp_pem.close()
+        ephemeral_cert_path = tmp_pem.name
+        cert_file = ephemeral_cert_path
+        key_file = ephemeral_cert_path
+
+    if cert_file and key_file:
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
             tmp_stamped = tmp.name
         try:
@@ -548,6 +590,11 @@ def sign_pdf(
             if os.path.exists(tmp_stamped):
                 try:
                     os.unlink(tmp_stamped)
+                except OSError:
+                    pass
+            if ephemeral_cert_path and os.path.exists(ephemeral_cert_path):
+                try:
+                    os.unlink(ephemeral_cert_path)
                 except OSError:
                     pass
     else:

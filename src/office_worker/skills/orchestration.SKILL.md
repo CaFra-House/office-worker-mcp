@@ -3,7 +3,7 @@ name: office-worker-orchestration
 description: "Intent-to-tools workflow orchestration for The Office Worker. Maps business intentions (factura, informe, acta, contrato, auditoria, batch, redact-flow, sign-flow, rag-ingest, compliance-flow) directly to deterministic tool chains with strict anti-loop limits."
 ---
 
-# The Office Worker — Orchestration & Intent Workflows (v0.8.0)
+# The Office Worker — Orchestration & Intent Workflows (v0.9.0)
 
 Directs high-level business goals into deterministic, single-turn or pipelined MCP tool chains. 100% local, zero cloud dependencies, private, and deterministic.
 
@@ -13,16 +13,19 @@ Directs high-level business goals into deterministic, single-turn or pipelined M
 
 | Business Intent | Primary Tools Sequence | Output & Verification |
 |---|---|---|
-| **Factura (Invoice)** | `render_document` or `create_word(template_docx="factura_simple")` &rarr; `convert_to_pdf` | Final PDF invoice; verify via `pdf_preview` |
+| **Factura (Invoice)** | `render_document(design_mode="premium")` or `create_word(template_docx="factura_simple")` &rarr; `convert_to_pdf` | Final PDF invoice; verify via `pdf_preview` |
 | **Informe (Executive Report)** | `create_word(template_docx="informe_ejecutivo")` or `create_pptx` &rarr; `convert_to_pdf` | High-fidelity executive deck or docx/pdf |
+| **Libro / Manual (Multi-chapter Book)** | `create_book(title, chapters=[...], theme, epub=True)` &rarr; `pdf_preview` | Multi-chapter PDF with automated TOC (real pages) + EPUB |
+| **Análisis Dinámico (Pivot Tables)** | `create_excel` or `edit_excel(operations=[{op: "add_pivot", ...}])` | Excel workbook with styled pivot sheet, sum/count/avg, and auto-filters |
 | **Acta (Meeting Minutes)** | `create_word(template_docx="acta_meeting")` &rarr; `convert_to_pdf` &rarr; `sign_pdf` | Approved, timestamped board minutes |
 | **Contrato (Contract & Agreement)** | `create_word(template_docx="carta_formal")` or `mail_merge` &rarr; `edit_word` &rarr; `document_diff` &rarr; `sign_pdf` &rarr; `verify_pdf_signature` | Revision-tracked, cryptographically signed legal contract |
 | **Auditoría (Audit Checklist)** | `create_excel(table_style="TableStyleMedium9", auto_filter=True)` or `create_word(template_docx="checklist_auditoria")` &rarr; `convert_to_pdf` | Structured checklist with active filters and corporate palette |
 | **Batch (Pipelines)** | `office_batch(operations=[...])` | Executes up to 20 operations in 1 roundtrip without intermediate chat turns |
 | **Redact Flow (Sanitization)** | `pdf_redact` (permanent redaction) &rarr; `scrub_metadata` (author, editor, history wipe) &rarr; `pdf_preview` | Sanitized document with zero PII leaks or metadata traces |
-| **Sign Flow (Digital Signature)** | `sign_pdf` (sello PNG + cert PEM) &rarr; `verify_pdf_signature` (audit cryptographic validity) | Verifiable PAdES digital signature |
+| **Sign Flow (Digital Signature)** | `sign_pdf` (sello PNG + cert PEM o `auto_generate_test_cert=True`) &rarr; `verify_pdf_signature` (audit cryptographic validity) | Verifiable PAdES digital signature |
 | **RAG Ingest (Knowledge Base)** | `read_office(format="markdown")` for Office or `pdf_extract_structured(format="markdown")` for PDF | Markdown with headings `#` and pipe tables `\|` for LLM embeddings |
 | **Compliance Flow (Enterprise Redline & Protection)** | `document_diff` (detect differences) &rarr; `scrub_metadata` (clean personal data) &rarr; `protect_office` (AES password lock) &rarr; `verify_pdf_signature` | Comprehensive enterprise compliance and audit trail |
+| **Doctor (Environment Diagnostics)** | `environment_status()` or CLI `owi doctor` | Audits system binaries/python libs and outputs exact OS install commands |
 
 ---
 

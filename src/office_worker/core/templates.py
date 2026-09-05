@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from jinja2 import Environment, FileSystemLoader, BaseLoader, StrictUndefined
 
-from .themes import load_theme, css_vars
+from .themes import load_theme, css_vars, PREMIUM_CSS
 from .security import safe_out, safe_url_fetcher
 
 # CSS base compartido por todas las plantillas (usa las variables del tema).
@@ -46,6 +46,7 @@ def render_pdf(
     footer_left=None,
     footer_right=None,
     page_numbers=True,
+    design_mode="standard",
 ):
     """Rellena una plantilla HTML (Jinja) con `data` + `theme` y exporta a PDF vía WeasyPrint.
 
@@ -57,6 +58,7 @@ def render_pdf(
     - watermark_text: texto diagonal semitransparente (ej: 'CONFIDENCIAL').
     - footer_left / footer_right: texto en las esquinas inferiores izquierda y derecha.
     - page_numbers: booleano (default True) para mostrar 'Página X de Y' en el centro inferior.
+    - design_mode: 'standard' (default) o 'premium' (maquetación editorial con jerarquía visual y espaciado reforzado).
     Devuelve la ruta absoluta del PDF generado.
 
     Seguridad:
@@ -135,8 +137,9 @@ def render_pdf(
 
     body = tmpl.render(**ctx)
 
+    css_chosen = PREMIUM_CSS if str(design_mode or "").lower().strip() == "premium" else _BASE_CSS
     html_doc = f"""<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
-<style>{css_vars(th)}{_BASE_CSS}{logo_css}{footer_css}{watermark_css}</style></head><body>{watermark_html}{body}</body></html>"""
+<style>{css_vars(th)}{css_chosen}{logo_css}{footer_css}{watermark_css}</style></head><body>{watermark_html}{body}</body></html>"""
 
     out_path = safe_out(out_path)
     HTML(string=html_doc, url_fetcher=safe_url_fetcher).write_pdf(out_path)

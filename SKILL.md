@@ -1,9 +1,9 @@
 ---
 name: office-worker
-description: "Use when the agent must create, edit, convert, manipulate, sign, compress, redact, flatten, preview, mail merge, diff, scrub metadata, password protect, verify signatures, or read office documents (PDF, Word/DOCX, Excel/XLSX, PowerPoint/PPTX). The Office Worker MCP: 27 tools for document comparison (document_diff), metadata scrubbing (scrub_metadata), Office password encryption (protect_office), signature verification (verify_pdf_signature), mail merge (mail_merge), bidirectional CSV/Excel conversion (csv_excel_convert), Office to Markdown extraction (read_office format='markdown'), native PowerPoint charts (create_pptx), batch pipelines (office_batch), in-place edits (edit_excel, edit_word), packaged templates (docxtpl), native Excel charts, structured tables, visual PNG previews (pdf_preview), irreversible redaction (pdf_redact), structured Markdown/JSON extraction for RAG (pdf_extract_structured), smart document splitting (split_smart), PDF flattening (flatten), PDF all-in-one reader (read_pdf flags), PDF-to-Excel (pdf_to_excel), Office reader (read_office), AcroForm filling, OCR, compression, signatures, and conversion. Guided proactive next_steps with hard anti-loop limits."
+description: "Use when the agent must create, edit, convert, manipulate, sign, compress, redact, flatten, preview, mail merge, diff, scrub metadata, password protect, verify signatures, build multi-chapter books/manuals, generate Excel pivot tables, or read office documents (PDF, Word/DOCX, Excel/XLSX, PowerPoint/PPTX). The Office Worker MCP: 29 tools for document comparison (document_diff), metadata scrubbing (scrub_metadata), Office password encryption (protect_office), signature verification (verify_pdf_signature), multi-chapter books PDF/EPUB (create_book), environment diagnostics (environment_status), Excel pivot tables (add_pivot in create_excel/edit_excel), premium design mode (render_document design_mode='premium'), mail merge (mail_merge), bidirectional CSV/Excel conversion (csv_excel_convert), Office to Markdown extraction (read_office format='markdown'), native PowerPoint charts (create_pptx), batch pipelines (office_batch), in-place edits (edit_excel, edit_word), packaged templates (docxtpl), native Excel charts, structured tables, visual PNG previews (pdf_preview), irreversible redaction (pdf_redact), structured Markdown/JSON extraction for RAG (pdf_extract_structured), smart document splitting (split_smart), PDF flattening (flatten), PDF all-in-one reader (read_pdf flags), PDF-to-Excel (pdf_to_excel), Office reader (read_office), AcroForm filling, OCR, compression, signatures, and conversion. Guided proactive next_steps with hard anti-loop limits."
 ---
 
-# The Office Worker — Agent Operating Manual (v0.8.0)
+# The Office Worker — Agent Operating Manual (v0.9.0)
 
 Generates, edits, secures, audits, and transforms professional corporate office documents (**PDF, Word/DOCX, Excel/XLSX, PowerPoint/PPTX**) using the `office-worker` MCP server. 100% local, zero external API keys, fully private, deterministic, and safe.
 
@@ -28,36 +28,42 @@ The Golden Rule: **One tool per format, one deterministic path per task.**
 13. **Guided Next Steps (`next_steps`):** Creation and conversion tools return recommended follow-up actions in `next_steps`. Prioritize these suggested next steps to guide users through the document lifecycle.
 14. **Honest Document Diffs (`document_diff`):** When comparing document revisions (Word or PDF), inspect `document_diff`. Note that comparisons are textual diffs on extracted content via `difflib`, not legal-grade semantic redlines.
 15. **Privacy Scrubbing & Encryption (`scrub_metadata` & `protect_office`):** Scrub identifying metadata before external dispatch. For confidential Office files, apply standard AES agile encryption via `protect_office`.
-16. **Cryptographic Signature Verification (`verify_pdf_signature`):** Audit digital signatures with `verify_pdf_signature` to check document integrity, signer identity, and certificate trust anchors.
+16. **Real PAdES Signing & Verification (`sign_pdf` & `verify_pdf_signature`):** `sign_pdf` produces a cryptographic PAdES digital signature when provided with `cert_pem` (+ `key_pem`) or `auto_generate_test_cert=True` (ephemeral self-signed cert clearly marked Non-Production for testing/demo). Without a certificate or flag, it applies a visual PNG stamp. `verify_pdf_signature` inspects signatures via pyhanko, PyMuPDF, and pypdf; returns `valid=True/False` if cryptographically verified, or `valid=None` with an honest warning if only signature presence is detected (never fakes validity).
+17. **Excel Pivot Tables (`add_pivot`):** Use `add_pivot` in `edit_excel` or `create_excel` to aggregate clean tabular data into formatted pivot sheets with auto-filters. Verify source columns and numerical headers beforehand.
+18. **Multi-Chapter Books & Manuals (`create_book`):** For books, guides, and manuals with multiple chapters, use `create_book`. It generates professional covers, automatic TOC with real page numbers, and optional EPUB export.
+19. **Editorial Polish with `design_mode='premium'`:** When generating executive PDFs with `render_document`, specify `design_mode="premium"` for golden-ratio typography, kicker badges, and elevated visual hierarchy without token overhead.
+20. **Environment Status & Diagnostics (`environment_status`):** If a conversion or OCR command fails or before running high-dependency tasks, call `environment_status` to verify active binaries and libraries.
 
 ---
 
-## Tool Directory (27 Specialized Tools)
+## Tool Directory (29 Specialized Tools)
 
 | Tool | Returns | Primary Use Case | When NOT to use |
 |---|---|---|---|
+| `create_book` | JSON `{status, path, bytes, chapters_count, epub_path?, next_steps}` | Compiles multi-chapter PDF books/manuals with cover, automated TOC (real pages), and EPUB | Do NOT use for short single-page documents or editable Word |
+| `environment_status` | JSON `{status, os, package_manager, core_ready, all_ready, capabilities}` | Audits system dependencies (LibreOffice, WeasyPrint, PyMuPDF) and provides OS install commands | Do NOT use to generate or modify document content |
 | `document_diff` | JSON `{status, summary, diffs, warnings}` | Compares two Word or PDF documents returning honest paragraph additions, deletions, and modifications | Do NOT use for legal-grade redlines or pixel diffs |
 | `scrub_metadata` | JSON `{status, path, bytes, scrubbed_fields}` | Strips sensitive author, title, revision, and editor metadata from PDF, Word, Excel, and PPTX files | Do NOT use to redact visual page content (use `pdf_redact`) |
 | `protect_office` | JSON `{status, path, bytes, encrypted}` | Protects Office files (.docx, .xlsx, .pptx) with standard agile AES encryption password via msoffcrypto | Do NOT use for PDFs (use `render_document` or `pdf_manipulate`) |
-| `verify_pdf_signature` | JSON `{status, has_signature, valid, signer, date, warnings}` | Verifies cryptographic digital signatures and integrity in PDF files via pyhanko/pypdf | Do NOT use to sign documents (use `sign_pdf`) |
-| `mail_merge` | JSON `{status, n_docs, paths, fields_used}` | Generates N personalized `.docx` files from a Jinja2 template and CSV/JSON dataset | Do NOT use for one-off single documents (use `create_word`) |
+| `verify_pdf_signature` | JSON `{status, has_signature, valid, signer, date, warnings}` | Verifies cryptographic digital signatures in PDF via pyhanko/PyMuPDF/pypdf (valid=True/False/None) | Do NOT use to sign documents (use `sign_pdf`) |
+| `mail_merge` | JSON `{status, n_docs, paths, fields_used, next_steps}` | Generates N personalized `.docx` files from a Jinja2 template and CSV/JSON dataset | Do NOT use for one-off single documents (use `create_word`) |
 | `csv_excel_convert` | JSON `{status, path/files, rows_converted?, sheets_converted?, fidelity, warnings}` | Fast bidirectional conversion between CSV and styled `.xlsx` (tables + autofilters) | Do NOT use for manual cell-by-cell formulas or charts (use `create_excel` or `edit_excel`) |
 | `read_office` | JSON `{status, format, paragraphs/slides/sheets, text, markdown?}` | Extracts text and structure from `.docx`, `.pptx`, and `.xlsx` as JSON or Markdown (`format="markdown"`) | Do NOT use on PDF files (use `read_pdf` or `pdf_extract_structured`) |
-| `create_pptx` | JSON `{status, path, bytes, slides}` | Generates editable PowerPoint decks (native text, cards, tables, badges, and native bar/line/pie charts) | Do NOT use for long narrative documents or balance sheets |
-| `pdf_redact` | JSON `{status, path, bytes, redactions_count}` | Permanently removes sensitive PII/passwords via text search or coordinates | Do NOT use for standard text editing (use `edit_word`) |
+| `create_pptx` | JSON `{status, path, bytes, slides, next_steps}` | Generates editable PowerPoint decks (native text, cards, tables, badges, and native bar/line/pie charts) | Do NOT use for long narrative documents or balance sheets |
+| `pdf_redact` | JSON `{status, path, bytes, redactions_count, next_steps}` | Permanently removes sensitive PII/passwords via text search or coordinates | Do NOT use for standard text editing (use `edit_word`) |
 | `pdf_extract_structured` | JSON `{status, format, content?, pages, n_tables}` | Extracts text, tables (Markdown pipes / arrays), and metadata for RAG workflows | Do NOT use for scanned images without text (use `pdf_ocr`) |
 | `pdf_preview` | JSON `{status, data_url, pages, path?, bytes?}` | Renders PDF pages to PNG (Base64 data URL) for multimodal vision verification | Do NOT use for extracting selectable text (use `read_pdf`) |
 | `read_pdf` | JSON `{pages, metadata, tables?, fields?, images?}` | All-in-one PDF inspection: text, tables, form fields, and Base64 images | Do NOT use on non-digital scanned PDFs (use `pdf_ocr`) |
 | `pdf_manipulate` | JSON `{status, path/files, bytes, warnings?}` | Merges, rotates, extracts ranges, flattens forms (`flatten`), or smart-splits (`split_smart`) | Do NOT use for editing internal paragraph text |
-| `edit_excel` | JSON `{status, path, fidelity, warnings}` | In-place updates: cells, rows, columns, tables, auto-filters, formulas, native charts | Do NOT use to build spreadsheets from nothing (use `create_excel`) |
+| `edit_excel` | JSON `{status, path, fidelity, warnings}` | In-place updates: cells, rows, columns, tables, auto-filters, formulas, native charts, pivot tables (`add_pivot`) | Do NOT use to build spreadsheets from nothing (use `create_excel`) |
 | `edit_word` | JSON `{status, path, fidelity, warnings}` | In-place updates: paragraphs, text replacement, heading inserts, tables | Do NOT use to create brand-new files from scratch (use `create_word`) |
 | `office_batch` | JSON `{status, total, succeeded, failed, results}` | Chains multi-document pipelines in 1 roundtrip with fault isolation | Do NOT use for simple one-off commands |
 | `pdf_to_excel` | JSON `{status, path, n_tables, fidelity, warnings}` | Extracts structured PDF balance/pricing tables directly to styled `.xlsx` | Do NOT use for text-heavy narrative PDFs without tables |
-| `render_document` | JSON `{status, path, bytes}` | Renders high-end PDFs from Jinja HTML templates, corporate themes, logos, watermarks | Do NOT use for editable Office formats (`.docx`, `.xlsx`, `.pptx`) |
-| `create_word` | JSON `{status, path, bytes}` | Generates new `.docx` files from blocks or official packaged templates | Do NOT use to edit existing documents (use `edit_word`) |
-| `create_excel` | JSON `{status, path, bytes}` | Generates styled multi-sheet `.xlsx` workbooks with auto-filters and native charts | Do NOT use to update existing workbooks (use `edit_excel`) |
-| `convert_to_pdf` | JSON `{status, path, fidelity, warnings}` | Converts Office files (`.docx`, `.xlsx`, `.pptx`) to PDF via headless LibreOffice | Do NOT use when generating documents from HTML templates |
-| `sign_pdf` | JSON `{status, path, bytes}` | Stamps visual PNG signature/seal and applies cryptographic PAdES digital signature | Do NOT use to alter document text |
+| `render_document` | JSON `{status, path, bytes, next_steps}` | Renders high-end PDFs from Jinja HTML templates, corporate themes, logos, watermarks, design_mode | Do NOT use for editable Office formats (`.docx`, `.xlsx`, `.pptx`) |
+| `create_word` | JSON `{status, path, bytes, next_steps}` | Generates new `.docx` files from blocks or official packaged templates | Do NOT use to edit existing documents (use `edit_word`) |
+| `create_excel` | JSON `{status, path, bytes, next_steps}` | Generates styled multi-sheet `.xlsx` workbooks with auto-filters, native charts, and pivot tables | Do NOT use to update existing workbooks (use `edit_excel`) |
+| `convert_to_pdf` | JSON `{status, path, fidelity, warnings, next_steps}` | Converts Office files (`.docx`, `.xlsx`, `.pptx`) to PDF via headless LibreOffice | Do NOT use when generating documents from HTML templates |
+| `sign_pdf` | JSON `{status, path, bytes, next_steps}` | Stamps visual PNG seal and applies cryptographic PAdES digital signature (cert_pem or auto_generate_test_cert) | Do NOT use to alter document text |
 | `pdf_compress` | JSON `{status, path, bytes, savings_percent}` | Shrinks heavy PDFs by downsampling images and cleaning unused objects | Do NOT use on text-only PDFs with no images |
 | `pdf_fill_form` | JSON `{status, path, bytes}` | Fills interactive AcroForm fields deterministically with key-value data | Do NOT use on flat PDFs without AcroForm fields |
 | `pdf_ocr` | JSON `{status, text, path?}` | Performs Tesseract OCR on scanned documents or images, generating searchable PDF | Do NOT use on digital PDFs with existing text |
@@ -359,6 +365,67 @@ Followed by:
 }
 ```
 *Result:* Returns `{"has_signature": true, "valid": true, "intact": true, "signer": "Common Name: Julio Cardozo", "date": "D:20260905...", "warnings": [...]}` detailing cryptographic integrity and trust anchor status.
+
+### 21. Multi-Chapter Technical Manual (`create_book`)
+*User:* "Generate a 3-chapter employee handbook with a cover, table of contents, and corporate theme in PDF and EPUB."
+*Agent:* Call `create_book`:
+```json
+{
+  "output": "handbook.pdf",
+  "title": "Employee Operations Handbook",
+  "author": "Human Resources",
+  "theme": "corporate-blue",
+  "epub": true,
+  "chapters": [
+    {"title": "Company Culture", "content_html": "<p>Values, missions, and expectations.</p>"},
+    {"title": "Workplace Policies", "content_html": "<p>Remote work, PTO, and security standards.</p>"},
+    {"title": "Benefits and Growth", "content_html": "<p>Compensation reviews, mentorship, and health plans.</p>"}
+  ]
+}
+```
+*Result:* Returns `{"status": "ok", "path": "handbook.pdf", "chapters_count": 3, "epub_path": "handbook.epub", "next_steps": ["Inspect book layout with pdf_preview", "Verify digital signature with verify_pdf_signature"]}`.
+
+### 22. Excel Pivot Table Generation (`add_pivot`)
+*User:* "From financial_records.xlsx (sheet 'Transacciones'), create a pivot table sheet summing 'Monto' by 'Sucursal' and 'Rubro'."
+*Agent:* Call `edit_excel`:
+```json
+{
+  "input_path": "financial_records.xlsx",
+  "operations": [
+    {
+      "op": "add_pivot",
+      "sheet": "Transacciones",
+      "rows": "Sucursal",
+      "cols": "Rubro",
+      "values": "Monto",
+      "agg": "sum",
+      "pivot_sheet": "Pivot_Resumen"
+    }
+  ]
+}
+```
+*Result:* Returns `{"status": "ok", "path": "financial_records.xlsx", "fidelity": "rich", "sheets_modified": ["Pivot_Resumen"]}` with clean styling and auto-filters.
+
+### 23. Premium Editorial PDF Rendering (`render_document design_mode="premium"`)
+*User:* "Render our quarterly shareholder letter with high-end editorial typography and executive visual polish."
+*Agent:* Call `render_document`:
+```json
+{
+  "template_html": "<div class='kicker'>Shareholder Update</div><h1>Q3 Performance Letter</h1><p class='lead'>Record enterprise growth and margin expansion across cloud divisions.</p>",
+  "out_path": "shareholder_letter_q3.pdf",
+  "theme": "corporate-blue",
+  "design_mode": "premium"
+}
+```
+*Result:* Returns `{"status": "ok", "path": "shareholder_letter_q3.pdf", "bytes": 71240, "next_steps": ["Preview rendered document with pdf_preview", "Sign PDF with sign_pdf"]}`.
+
+### 24. Environment Status Diagnostic (`environment_status`)
+*User:* "Verify what Office Worker capabilities are available on this server."
+*Agent:* Call `environment_status`:
+```json
+{}
+```
+*Result:* Returns `{"status": "ok", "os": "linux", "package_manager": "apt", "core_ready": true, "all_ready": true, "capabilities": {...}}` outlining installed binary/python capabilities and tailored package manager install commands for any missing tools.
 
 ---
 

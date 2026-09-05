@@ -11,6 +11,10 @@
 > extracción Office a Markdown/JSON para RAG (`read_office`), comparación honesta de revisiones (`document_diff`),
 > limpieza de metadatos sensibles (`scrub_metadata`), protección con clave estándar Office (`protect_office`),
 > verificación criptográfica de firmas digitales (`verify_pdf_signature`), guiado proactivo con recomendaciones (`next_steps`),
+> tablas dinámicas reales en Excel (`add_pivot` con sum/count/avg y autofiltro),
+> generación de libros y manuales multi-capítulo PDF con portada y TOC automático numerado + exportación opcional EPUB (`create_book`),
+> modo de diseño editorial premium (`design_mode='premium'` en `render_document`),
+> diagnóstico de entorno e instalación asistida por OS (`owi doctor` y herramienta MCP `environment_status`),
 > gráficos nativos en PowerPoint y Excel, edición in-place, preview PNG para inspección previa a entrega,
 > redacción irreversible permanente (`pdf_redact`), aplanado para archivo (`flatten`),
 > división inteligente por límites (`split_smart`), conversión PDF a Excel, skills empaquetadas y reporte honesto de fidelidad.
@@ -20,6 +24,7 @@
 pip install office-worker-mcp          # instala librería + MCP server + CLI 'owi'
 pip install "office-worker-mcp[ocr]"   # extra para OCR con Tesseract + Pillow
 pip install "office-worker-mcp[sign]"  # extra para firma digital PAdES con pyhanko
+pip install "office-worker-mcp[book]"  # extra para exportación EPUB con ebooklib
 ```
 
 Conectalo a tu agente (ejemplo config MCP / stdio):
@@ -33,9 +38,13 @@ Conectalo a tu agente (ejemplo config MCP / stdio):
 Los MCPs de documentos existentes son CRUD genéricos (47–80 tools que inflan el contexto)
 y no cubren diseño, fidelidad honesta ni operaciones integrales sobre documentos. The Office Worker hace lo contrario:
 
-| Capacidad | office-mcp / takos | **The Office Worker (v0.8.0)** |
+| Capacidad | office-mcp / takos | **The Office Worker (v0.9.0)** |
 |---|---|---|
-| Tools & Contexto | ~47–80 CRUD genéricas (>6.4K tok) | **27 herramientas especializadas** (~2335 tok/turno total, <2350 tok, ~86 tok/tool) |
+| Tools & Contexto | ~47–80 CRUD genéricas (>6.4K tok) | **29 herramientas especializadas** (~2551 tok/turno total, <2600 tok, ~88 tok/tool) |
+| Tablas Dinámicas Excel | ❌ No disponible | ✅ `add_pivot` en `create_excel` y `edit_excel`: agregaciones sum/count/avg vía pandas con hoja formateada y autofiltro |
+| Libros & Manuales Multi-capítulo | ❌ No disponible | ✅ `create_book`: PDF largo con portada, TOC automático numerado de páginas (WeasyPrint GCPM) y exportación EPUB |
+| Diseño Editorial Premium | ❌ No disponible | ✅ `render_document(design_mode="premium")`: tipografía editorial, espaciado refinado, jerarquía visual y kickers |
+| Diagnóstico de Entorno / Doctor | ❌ Errores silenciosos | ✅ `owi doctor` & `environment_status`: auditoría de binarios/librerías y comandos de instalación exactos por OS |
 | Comparación de Documentos | ❌ No disponible | ✅ `document_diff`: diff textual honesto (párrafos agregados/eliminados/modificados) Word/PDF con warnings |
 | Limpieza de Metadatos | ❌ No disponible | ✅ `scrub_metadata`: borrado de autor, título, revisiones y propiedades en PDF, Word, Excel y PowerPoint |
 | Cifrado / Contraseña Office | ❌ No disponible | ✅ `protect_office`: cifrado robusto ECMA-376 agile AES con contraseña para `.docx`, `.xlsx`, `.pptx` |
@@ -69,10 +78,12 @@ y no cubren diseño, fidelidad honesta ni operaciones integrales sobre documento
 
 ---
 
-## Las 27 Tools (v0.8.0)
+## Las 29 Tools (v0.9.0)
 
 | Tool | Qué retorna | Cuándo usarla | Cuándo NO usarla |
 |---|---|---|---|
+| `create_book` | JSON `{status, path, bytes, chapters_count, epub_path?, next_steps}` | Para compilar libros o manuales multi-capítulo en PDF (portada, TOC numerado automático) y EPUB | No usar para documentos cortos de una o dos páginas |
+| `environment_status` | JSON `{status, os, package_manager, core_ready, all_ready, capabilities}` | Para auditar capacidades del sistema (LibreOffice, WeasyPrint, PyMuPDF, etc.) e instrucciones de instalación | No usar para generar o manipular documentos |
 | `document_diff` | JSON `{status, summary, diffs, warnings}` | Para comparar dos documentos Word (.docx) o PDF y obtener diferencias de párrafos con warnings honestos | No usar para redlines legales semánticos o diffs de píxeles |
 | `scrub_metadata` | JSON `{status, path, bytes, scrubbed_fields}` | Para borrar autor, historial de revisiones, editores y propiedades personales en PDF, Word, Excel y PPTX | No usar para censurar texto visible en páginas (usar `pdf_redact`) |
 | `protect_office` | JSON `{status, path, bytes, encrypted}` | Para cifrar y proteger con contraseña documentos Office (.docx, .xlsx, .pptx) con AES estándar | No usar para PDFs (usar `render_document` o `pdf_manipulate`) |
@@ -86,12 +97,12 @@ y no cubren diseño, fidelidad honesta ni operaciones integrales sobre documento
 | `pdf_preview` | JSON `{status, data_url, pages, path?, bytes?}` | Para renderizar páginas PDF a imagen PNG y revisarlo visualmente antes de entregarlo | No usar para extraer texto seleccionable (usar `read_pdf`) |
 | `read_pdf` | JSON `{pages, metadata, tables?, fields?, images?}` | Herramienta todo-en-uno: texto, metadatos, tablas (`extract_tables`), forms (`list_forms`), imágenes base64 (`extract_images`) | No usar para PDFs escaneados que requieran OCR completo (usar `pdf_ocr`) |
 | `office_batch` | Resumen JSON `{status, total, succeeded, failed, results}` | Para ejecutar secuencias de operaciones documentales en un solo turno sin roundtrips | No usar para operaciones aisladas de un solo paso |
-| `edit_excel` | JSON `{status, path, bytes, fidelity, warnings}` | Para modificar celdas, agregar filas/columnas, tablas o gráficos en `.xlsx`/`.xlsm` existentes | No usar para crear planillas desde cero (usar `create_excel`) |
+| `edit_excel` | JSON `{status, path, bytes, fidelity, warnings}` | Para modificar celdas, agregar filas/columnas, tablas, gráficos o tablas dinámicas (`add_pivot`) en `.xlsx`/`.xlsm` | No usar para crear planillas desde cero (usar `create_excel`) |
 | `edit_word` | JSON `{status, path, bytes, fidelity, warnings}` | Para editar `.docx` existentes (agregar párrafos, reemplazar texto, insertar tras títulos, tablas) | No usar para crear documentos nuevos desde cero (usar `create_word`) |
 | `pdf_to_excel` | JSON `{status, path, bytes, n_tables, fidelity, warnings}` | Para extraer tablas desde PDFs (balances, facturas, informes) a planillas `.xlsx` limpias | No usar para PDFs escaneados sin tablas seleccionables (usar `pdf_ocr`) |
-| `render_document` | JSON `{status, path, bytes}` | Para generar PDFs impecables desde plantillas HTML/Jinja + tema corporativo + logo + watermark | No usar para editar documentos existentes (usar `edit_word`/`pdf_manipulate`) |
+| `render_document` | JSON `{status, path, bytes}` | Para generar PDFs impecables desde plantillas HTML/Jinja + tema corporativo + modo diseño (`standard`\|`premium`) | No usar para editar documentos existentes (usar `edit_word`/`pdf_manipulate`) |
 | `create_word` | JSON `{status, path, bytes}` | Para crear documentos Word `.docx` nuevos desde bloques o plantillas empaquetadas | No usar para editar documentos en disco (usar `edit_word`) |
-| `create_excel` | JSON `{status, path, bytes}` | Para crear libros Excel `.xlsx` multi-hoja con tablas estructuradas, autofiltro y gráficos | No usar para actualizar libros existentes (usar `edit_excel`) |
+| `create_excel` | JSON `{status, path, bytes}` | Para crear libros Excel `.xlsx` multi-hoja con tablas estructuradas, autofiltro, gráficos y tablas dinámicas | No usar para actualizar libros existentes (usar `edit_excel`) |
 | `convert_to_pdf` | JSON `{status, path, bytes, fidelity, warnings}` | Para exportar archivos Office (`.docx`, `.xlsx`, `.pptx`) a PDF localmente con LibreOffice | No usar cuando se genera un documento nuevo desde plantilla HTML |
 | `sign_pdf` | JSON `{status, path, bytes}` | Para estampar sello visual PNG y aplicar firma digital criptográfica PAdES con certificado PEM | No usar para editar contenido textual de un documento |
 | `pdf_compress` | JSON `{status, path, bytes, savings_percent}` | Para optimizar y comprimir PDFs pesados reduciendo imágenes y limpiando objetos | No usar en PDFs de texto puro donde no hay imágenes |
@@ -103,7 +114,7 @@ y no cubren diseño, fidelidad honesta ni operaciones integrales sobre documento
 
 ---
 
-## Capacidades Destacadas (v0.7.0)
+## Capacidades Destacadas (v0.9.0)
 
 ### 1. Mail Merge Word en Lotes (`mail_merge`)
 Genera $N$ documentos `.docx` independientes y personalizados combinando una plantilla `docxtpl` con placeholders `{{ variable }}` y un dataset tabular (CSV o JSON):
@@ -281,8 +292,73 @@ Audita y valida documentos PDF firmados digitalmente mediante `pyhanko` y `pypdf
 - Emite advertencias transparentes cuando el certificado es auto-firmado o no está anclado en la cadena de confianza del sistema.
 
 ### 18. Guiado Proactivo (`next_steps` y Skill de Orquestación)
-- Las herramientas principales de generación y transformación (`create_word`, `create_excel`, `create_pptx`, `render_document`, `convert_to_pdf`, `sign_pdf`, `pdf_redact`, `mail_merge`) retornan un campo opcional `"next_steps"` con la siguiente acción lógica sugerida en inglés (ej. tras `create_word` &rarr; `["Convert to PDF with convert_to_pdf", "Preview rendered document with pdf_preview"]`).
+- Las herramientas principales de generación y transformación (`create_word`, `create_excel`, `create_pptx`, `render_document`, `convert_to_pdf`, `sign_pdf`, `pdf_redact`, `mail_merge`, `create_book`) retornan un campo opcional `"next_steps"` con la siguiente acción lógica sugerida en inglés (ej. tras `create_book` &rarr; `["Inspect book layout with pdf_preview", "Verify digital signature with verify_pdf_signature"]`).
 - Incluye la skill empaquetada `orchestration.SKILL.md` instalable con `owi skill install orchestration`, mapeando intenciones de negocio (factura, informe, acta, contrato, auditoria, batch, redact, sign, rag, compliance) a cadenas de herramientas deterministas.
+
+### 19. Tablas Dinámicas Reales en Excel (`add_pivot`)
+Genera tablas dinámicas agregadas mediante `pandas.pivot_table` y las escribe en una hoja nueva estilizada con encabezados corporativos, bordes, alternancia de filas y `auto_filter`:
+- Disponible como operación en `edit_excel` y dentro de `create_excel` (`sheets_json` / `operations`).
+- Soporta dimensiones de filas (`rows`), columnas opcionales (`cols`), métricas numéricas (`values`) y funciones de agregación (`agg: "sum" | "count" | "avg"`).
+- Detección inteligente de rango o rango explícito (`data_range: "A1:D100"` o `"Ventas!A1:D100"`).
+
+```json
+{
+  "input_path": "/workspace/ventas_2026.xlsx",
+  "operations": [
+    {
+      "op": "add_pivot",
+      "sheet": "Ventas",
+      "rows": "Region",
+      "cols": "Categoria",
+      "values": "Monto",
+      "agg": "sum",
+      "pivot_sheet": "Pivot_Region_Categoria"
+    }
+  ]
+}
+```
+
+### 20. Libros y Manuales Multi-Capítulo (`create_book` PDF + EPUB)
+Compila publicaciones largas, manuales técnicos y libros corporativos desde listas de capítulos HTML:
+- **PDF Profesional**: Genera portada editorial completa con título, subtítulo, autor y fecha; tabla de contenidos (TOC) generada automáticamente con números de página reales resueltos vía WeasyPrint CSS Paged Media (`target-counter(attr(href), page)`); y capítulos numerados con encabezados y pies de página (`@page`).
+- **EPUB Opcional**: Si se activa `epub=True` (requiere `ebooklib`), genera en paralelo un archivo `.epub` estructurado y compatible con lectores digitales (validado con número mágico PK).
+
+```json
+{
+  "output": "/workspace/manual_arquitectura.pdf",
+  "title": "Manual de Arquitectura Cloud",
+  "author": "Equipo de Infraestructura",
+  "theme": "corporate-blue",
+  "epub": true,
+  "chapters": [
+    {"title": "Visión General", "content_html": "<p>Introducción a la plataforma y componentes clave.</p>"},
+    {"title": "Seguridad y Cifrado", "content_html": "<p>Políticas de acceso y gestión de claves.</p>"}
+  ]
+}
+```
+
+### 21. Modo de Diseño Editorial Premium (`render_document design_mode="premium"`)
+Eleva la presentación visual de cualquier informe, propuesta o balance en PDF mediante la selección de `design_mode="premium"` en `render_document`:
+- Aplica reglas CSS editoriales avanzadas (`PREMIUM_CSS`) empaquetadas: tipografía de proporciones áureas, títulos contrastados, kickers destacados, espaciado modular refinado, tablas con bordes sutiles y tarjetas con acentos visuales (`.accent-bar`, `.kicker`).
+- **Cero latencia y cero costo de tokens:** Funciona 100% en local mediante hojas de estilo estáticas empaquetadas en `themes.py`, sin requerir llamadas externas a modelos de diseño ni dependencias de red.
+
+```json
+{
+  "template_html": "<div class='kicker'>Reporte Trimestral</div><h1>Balance Operativo Q3</h1><p class='lead'>Resumen ejecutivo de operaciones consolidadas.</p>",
+  "out_path": "/workspace/balance_premium.pdf",
+  "theme": "corporate-blue",
+  "design_mode": "premium"
+}
+```
+
+### 22. Diagnóstico de Entorno OWI Doctor (`owi doctor` / `environment_status`)
+Audita el entorno de ejecución local y reporta la disponibilidad de dependencias binarias y librerías Python sin ejecutar efectos colaterales:
+- CLI: `owi doctor` devuelve un JSON detallado con el estado de `libreoffice`, `tesseract`, `pdftoppm`, `weasyprint`, `pyhanko`, `msoffcrypto`, `ebooklib`, etc.
+- MCP Tool: `environment_status` permite que cualquier agente de IA diagnostique qué capacidades están activas (`convert_to_pdf`, `pdf_ocr`, `render_document`, etc.) y reciba el comando exacto para instalar dependencias faltantes según su sistema operativo (`apt`, `brew` o `dnf`).
+
+```json
+{}
+```
 
 ---
 
@@ -372,15 +448,84 @@ Audita y valida documentos PDF firmados digitalmente mediante `pyhanko` y `pypdf
 ```
 *Result:* Returns `{"status": "ok", "encrypted": true}` producing standard agile AES encrypted spreadsheet.
 
-### Flujo 7: Verifying Cryptographic PDF Digital Signatures (`verify_pdf_signature`)
-*User:* "Verify if this signed vendor contract vendor_contract_signed.pdf has an intact digital signature."
-*Agent:*
+### Flujo 7: Cryptographic PDF Digital Signature & Verification (`sign_pdf` & `verify_pdf_signature`)
+*User:* "Sign this vendor contract with an automated test certificate and verify that the signature is valid."
+*Agent:* Call `sign_pdf` with `auto_generate_test_cert=True`:
 ```json
 {
-  "input": "vendor_contract_signed.pdf"
+  "input_pdf": "contracts/vendor_contract.pdf",
+  "output": "contracts/vendor_contract_signed.pdf",
+  "auto_generate_test_cert": true,
+  "reason": "Approved and Signed",
+  "location": "Buenos Aires"
 }
 ```
-*Result:* Returns `{"has_signature": true, "valid": true, "intact": true, "signer": "Common Name: Julio Cardozo", "reason": "Approved"}`.
+*Result:* Returns `{"status": "ok", "path": ".../vendor_contract_signed.pdf", "bytes": 84520, "next_steps": ["Verify digital signature with verify_pdf_signature", "Preview signed document with pdf_preview"]}`.
+
+Then verify with `verify_pdf_signature`:
+```json
+{
+  "input": "contracts/vendor_contract_signed.pdf"
+}
+```
+*Result:* Returns `{"status": "ok", "has_signature": true, "valid": true, "intact": true, "signer": "Office Worker Test Certificate (Non-Production)", "reason": "Approved and Signed", "warnings": ["Certificate is self-signed or not anchored in a trusted system certificate authority."]}`.
+
+### Flujo 8: Multi-Chapter Technical Manual with Automatic TOC (`create_book`)
+*User:* "Generate a 3-chapter security manual in PDF and EPUB format with a cover page, table of contents, and corporate theme."
+*Agent:* Call `create_book`:
+```json
+{
+  "output": "manuals/security_architecture.pdf",
+  "title": "Enterprise Security Architecture",
+  "author": "Security Engineering Team",
+  "theme": "corporate-blue",
+  "epub": true,
+  "chapters": [
+    {
+      "title": "Threat Modeling",
+      "content_html": "<p>Identification of assets, threat actors, and attack vectors.</p>"
+    },
+    {
+      "title": "Zero Trust Network Architecture",
+      "content_html": "<p>Microsegmentation, continuous authentication, and least privilege access.</p>"
+    },
+    {
+      "title": "Cryptographic Controls",
+      "content_html": "<p>Key rotation, AES-256 storage, and TLS 1.3 enforcement.</p>"
+    }
+  ]
+}
+```
+*Result:* Returns `{"status": "ok", "path": "manuals/security_architecture.pdf", "chapters_count": 3, "epub_path": "manuals/security_architecture.epub", "next_steps": ["Inspect book layout with pdf_preview", "Verify digital signature with verify_pdf_signature"]}`.
+
+### Flujo 9: Excel Pivot Table Aggregation (`edit_excel` with `add_pivot`)
+*User:* "Take our raw sales sheet in sales_q3.xlsx and generate a pivot table sheet summing revenue by region and product line."
+*Agent:* Call `edit_excel`:
+```json
+{
+  "input_path": "sales_q3.xlsx",
+  "operations": [
+    {
+      "op": "add_pivot",
+      "sheet": "RawData",
+      "rows": "Region",
+      "cols": "ProductLine",
+      "values": "Revenue",
+      "agg": "sum",
+      "pivot_sheet": "Pivot_Sales_Summary"
+    }
+  ]
+}
+```
+*Result:* Returns `{"status": "ok", "path": "sales_q3.xlsx", "fidelity": "rich", "sheets_modified": ["Pivot_Sales_Summary"]}` with styled headers, alternating rows, borders, and auto-filters.
+
+### Flujo 10: Environment Health Check & Missing Dependencies (`environment_status`)
+*User:* "Check if this machine has all binaries and Python libraries needed for document generation and OCR."
+*Agent:* Call `environment_status`:
+```json
+{}
+```
+*Result:* Returns `{"status": "ok", "os": "linux", "package_manager": "apt", "core_ready": true, "all_ready": true, "capabilities": {...}}`. If any dependency is missing, returns exact copy-paste command (e.g., `sudo apt-get install -y libreoffice`).
 
 ---
 
@@ -399,12 +544,24 @@ Para garantizar total transparencia técnica frente a los usuarios y administrad
    - `openpyxl` preserva las macros de archivos `.xlsm` de forma segura mediante `keep_vba=True`, pero **no ejecuta código VBA**.
 4. **Presentaciones PowerPoint (`create_pptx`):**
    - Requiere el extra opcional `[pptx]` junto con Playwright y Chromium instalado (`playwright install chromium`).
-5. **Firmas Digitales Criptográficas:**
-   - El estampado visual PNG funciona siempre. La firma criptográfica digital PAdES requiere un certificado X.509 válido en formato PEM.
+5. **Firmado Digital Criptográfico Real y Limitación Honesta (`sign_pdf` y `verify_pdf_signature`):**
+   - **Firma criptográfica PAdES:** `sign_pdf` produce una firma digital criptográfica PAdES (PKCS#7 detached) real y verificable cuando se provee `cert_pem` (y opcional `key_pem`/`passphrase`), o cuando se activa el parámetro opcional `auto_generate_test_cert=True` (genera un certificado autofirmado efímero marcado explícitamente como Non-Production para testing y demos).
+   - **Limitación honesta:** Si no se suministra certificado ni se activa `auto_generate_test_cert`, `sign_pdf` estampa únicamente el sello visual PNG sobre la página sin incrustar firma criptográfica en el árbol PDF. En dicho caso, `verify_pdf_signature` reporta honestamente `has_signature: False` y `valid: False`.
+   - **Verificación multi-motor:** `verify_pdf_signature` detecta firmas mediante `pyhanko`, `PyMuPDF` (`doc.get_sigflags()`, widgets de firma tipo 6) y `pypdf` (`/Root /AcroForm /SigFlags /Signatures`). Retorna `valid=True/False` si la validación criptográfica del digest y certificado se completó, o `valid=None` con advertencia honesta si solo se detecta presencia física de firma pero no es posible validar criptográficamente. NUNCA deja falsos positivos de validez.
 6. **Cifrado Office (`protect_office`):**
    - Aplica cifrado agile estándar ECMA-376 con AES mediante `msoffcrypto`. Protege la apertura del archivo en Word, Excel y PowerPoint. La protección con clave de archivos PDF se realiza mediante `render_document(password=...)` o `pdf_manipulate(operation="encrypt", password=...)`.
 7. **Comparación de Documentos (`document_diff`):**
    - La comparación se realiza a nivel textual mediante `difflib` sobre el texto y párrafos extraídos de Word (.docx) y PDF. No constituye un redline semántico ni legal-grade con seguimiento de marcas Word OOXML track changes nativo.
+8. **Guiado Proactivo (`next_steps`):**
+   - Las 9 herramientas principales (`create_word`, `create_excel`, `create_pptx`, `convert_to_pdf`, `render_document`, `sign_pdf`, `pdf_redact`, `mail_merge`, `create_book`) devuelven el campo `next_steps` con hasta 2 recomendaciones en inglés para guiar al agente de manera determinista en el ciclo documental.
+9. **Tablas Dinámicas Excel (`add_pivot`):**
+   - Agregación basada en pandas sobre datos tabulares que genera una hoja dedicada con formato institucional, encabezados destacados y autofiltro. No inserta la caché binaria OLAP de tablas dinámicas de Microsoft Office, sino una vista consolidada estática y reproducible.
+10. **Libros y Manuales (`create_book`):**
+   - El TOC de páginas en PDF aprovecha las funciones CSS Paged Media GCPM (`target-counter(attr(href), page)`) de WeasyPrint para resolver las páginas reales del contenido. La exportación a EPUB requiere el paquete opcional `ebooklib` (`pip install "office-worker-mcp[book]"`).
+11. **Modo Premium (`design_mode='premium'`):**
+   - Aplica hojas de estilo CSS locales optimizadas para publicaciones editoriales formales (`PREMIUM_CSS` en `themes.py`). No realiza consultas ni consume llamadas a APIs externas de diseño o IA.
+12. **OWI Doctor (`environment_status` / `owi doctor`):**
+   - Inspecciona de forma segura la presencia de binarios del sistema (LibreOffice, Tesseract, pdftoppm) y librerías Python instaladas. Retorna los comandos exactos de instalación para el gestor de paquetes del sistema operativo detectado (`apt`, `brew`, `dnf`), sin ejecutar comandos con privilegios ni modificar el sistema.
 
 ---
 
@@ -413,16 +570,16 @@ Para garantizar total transparencia técnica frente a los usuarios y administrad
 El repositorio cuenta con integración continua automatizada en GitHub Actions (`.github/workflows/ci.yml`) con matriz multiplataforma:
 - **Ubuntu:** `ubuntu-latest` (x86_64) en Python 3.11 y 3.12, más `ubuntu-24.04-arm` (ARM64 experimental).
 - **macOS:** `macos-latest` (Apple Silicon ARM64) en Python 3.11 y 3.12 con Homebrew (`pango`, `cairo`, `libffi`, `tesseract`).
-- **Verificación Smoke:** Ejecución obligatoria de suite completa de pruebas (`pytest -q`), verificación de herramientas CLI (`owi --help`) y auditoría de presupuesto de tokens (`count_tokens.py`).
+- **Verificación Smoke:** Ejecución obligatoria de suite completa de pruebas (`pytest -q`), verificación de herramientas CLI (`owi --help`, `owi doctor`, `owi book`) y auditoría de presupuesto de tokens (`count_tokens.py`).
 
 ---
 
 ## Desarrollo & Tests
 
 ```bash
-pip install -e ".[dev]"
-pytest -q            # Suite completa verificada en disco: test_core.py + test_e2e_mcp.py
-python count_tokens.py # Auditoría en tiempo real de tokens por schema (<1900 tok v0.6.0)
+pip install -e ".[dev,book]"
+pytest -q            # Suite completa verificada en disco: test_core.py + test_e2e_mcp.py (46 pasados)
+python count_tokens.py # Auditoría en tiempo real de tokens por schema (2550.75 tok v0.9.0, <2600 target)
 ```
 
 ## Licencia

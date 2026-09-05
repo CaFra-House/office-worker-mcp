@@ -1381,6 +1381,406 @@ def test_verify_pdf_signature_core(tmp_path):
     assert any("self-signed" in w.lower() for w in res_ver["warnings"])
 
 
+def test_sign_pdf_auto_generate_test_cert_and_verify(tmp_path):
+    """Test obligatorio v0.8.1: sign_pdf con auto_generate_test_cert -> verify_pdf_signature."""
+    from office_worker.core.pdf_tools import sign_pdf
+    from PIL import Image
+
+    pdf_raw = str(tmp_path / "base_raw.pdf")
+    render_pdf("<h1>Documento para Firma Automática</h1>", pdf_raw)
+    assert os.path.exists(pdf_raw)
+
+    # 1. Sin firma: verify_pdf_signature DEBE retornar has_signature False y valid False
+    r_unsigned = verify_pdf_signature(pdf_raw)
+    assert r_unsigned["status"] == "ok"
+    assert r_unsigned["has_signature"] is False
+    assert r_unsigned["valid"] is False
+
+    # 2. Sello visual solo (sin cert ni auto_generate_test_cert): NO debe tener firma criptográfica
+    sello_png = str(tmp_path / "sello_solo.png")
+    img = Image.new("RGBA", (120, 40), color=(0, 0, 0, 0))
+    img.save(sello_png)
+
+    pdf_visual_only = str(tmp_path / "visual_only.pdf")
+    sign_pdf(pdf_raw, pdf_visual_only, sello_img_path=sello_png, auto_generate_test_cert=False)
+    assert os.path.exists(pdf_visual_only)
+    r_visual = verify_pdf_signature(pdf_visual_only)
+    assert r_visual["has_signature"] is False
+    assert r_visual["valid"] is False
+
+    # 3. sign_pdf con auto_generate_test_cert=True
+    pdf_signed_auto = str(tmp_path / "signed_auto_test.pdf")
+    res_path = sign_pdf(
+        pdf_raw,
+        pdf_signed_auto,
+        sello_img_path=sello_png,
+        reason="Aprobación Automatizada de Test",
+        location="CABA",
+        auto_generate_test_cert=True,
+    )
+    assert os.path.exists(res_path)
+    assert os.path.getsize(res_path) > 0
+    assert open(res_path, "rb").read(5) == b"%PDF-"
+
+    # 4. verify_pdf_signature sobre PDF firmado con auto_generate_test_cert
+    r_signed = verify_pdf_signature(pdf_signed_auto)
+    assert r_signed["status"] == "ok"
+    assert r_signed["has_signature"] is True
+    assert r_signed["valid"] is True
+    assert r_signed["intact"] is True
+    assert r_signed["signatures_count"] >= 1
+    assert "Office Worker Test Certificate (Non-Production)" in (r_signed["signer"] or "")
+    assert r_signed["reason"] == "Aprobación Automatizada de Test"
+    assert r_signed["location"] == "CABA"
+    assert any("self-signed" in w.lower() for w in r_signed["warnings"])
+
+
+def test_next_steps_on_all_primary_tools(tmp_path):
+    """Test obligatorio v0.8.1: verificar que las 8 tools principales incluyan next_steps con lista no vacía [max 2 EN]."""
+    import json
+    from office_worker.mcp_server import (
+        create_word,
+        create_excel,
+        create_pptx,
+        convert_to_pdf,
+        render_document,
+        sign_pdf,
+        pdf_redact,
+        mail_merge,
+    )
+
+    d = str(tmp_path)
+
+    # 1. render_document
+    r_rd = render_document("<h1>Test Next Steps</h1>", f"{d}/doc_render.pdf")
+    assert r_rd["status"] == "ok"
+    assert "next_steps" in r_rd and isinstance(r_rd["next_steps"], list) and 1 <= len(r_rd["next_steps"]) <= 2
+    assert all(isinstance(s, str) and len(s) > 0 for s in r_rd["next_steps"])
+
+    # 2. create_word
+    r_cw = create_word(f"{d}/doc_word.docx", title="Test Word")
+    assert r_cw["status"] == "ok"
+    assert "next_steps" in r_cw and isinstance(r_cw["next_steps"], list) and 1 <= len(r_cw["next_steps"]) <= 2
+    assert all(isinstance(s, str) and len(s) > 0 for s in r_cw["next_steps"])
+
+    # 3. create_excel
+    r_ce = create_excel(f"{d}/doc_excel.xlsx", title="Test Excel")
+    assert r_ce["status"] == "ok"
+    assert "next_steps" in r_ce and isinstance(r_ce["next_steps"], list) and 1 <= len(r_ce["next_steps"]) <= 2
+    assert all(isinstance(s, str) and len(s) > 0 for s in r_ce["next_steps"])
+
+    # 4. create_pptx
+    r_cp = create_pptx(f"{d}/doc_slides.pptx", slides_json=json.dumps([{"title": "Slide 1"}]))
+    assert r_cp["status"] == "ok"
+    assert "next_steps" in r_cp and isinstance(r_cp["next_steps"], list) and 1 <= len(r_cp["next_steps"]) <= 2
+    assert all(isinstance(s, str) and len(s) > 0 for s in r_cp["next_steps"])
+
+    # 5. convert_to_pdf (si LibreOffice está disponible)
+    if shutil.which("soffice") or shutil.which("libreoffice"):
+        r_conv = convert_to_pdf(r_cw["path"], f"{d}/doc_converted.pdf")
+        assert r_conv["status"] == "ok"
+        assert "next_steps" in r_conv and isinstance(r_conv["next_steps"], list) and 1 <= len(r_conv["next_steps"]) <= 2
+        assert all(isinstance(s, str) and len(s) > 0 for s in r_conv["next_steps"])
+
+    # 6. sign_pdf (con auto_generate_test_cert=True)
+    r_sign = sign_pdf(r_rd["path"], f"{d}/doc_signed.pdf", auto_generate_test_cert=True)
+    assert r_sign["status"] == "ok"
+    assert "next_steps" in r_sign and isinstance(r_sign["next_steps"], list) and 1 <= len(r_sign["next_steps"]) <= 2
+    assert all(isinstance(s, str) and len(s) > 0 for s in r_sign["next_steps"])
+
+    # 7. pdf_redact
+    r_redact = pdf_redact(input_path=r_rd["path"], output=f"{d}/doc_redacted.pdf", search_text="Test")
+    assert r_redact["status"] == "ok"
+    assert "next_steps" in r_redact and isinstance(r_redact["next_steps"], list) and 1 <= len(r_redact["next_steps"]) <= 2
+    assert all(isinstance(s, str) and len(s) > 0 for s in r_redact["next_steps"])
+
+    # 8. mail_merge
+    from docx import Document
+    mm_tpl = f"{d}/tpl_mm.docx"
+    doc_mm = Document(); doc_mm.add_paragraph("Hola {{ nombre }}"); doc_mm.save(mm_tpl)
+    mm_csv = f"{d}/data_mm.csv"
+    with open(mm_csv, "w", encoding="utf-8") as f:
+        f.write("nombre\nAna\n")
+    r_mm = mail_merge(template_path=mm_tpl, dataset_csv=mm_csv, output_prefix=f"{d}/mm_out")
+    assert r_mm["status"] == "ok"
+    assert "next_steps" in r_mm and isinstance(r_mm["next_steps"], list) and 1 <= len(r_mm["next_steps"]) <= 2
+    assert all(isinstance(s, str) and len(s) > 0 for s in r_mm["next_steps"])
+
+
+def test_excel_pivot_table_core(tmp_path):
+    """Test obligatorio v0.9.0 (A): add_pivot en create_excel/edit_excel con agregados numéricos verificados."""
+    import openpyxl
+    xlsx_path = str(tmp_path / "ventas_corporativas.xlsx")
+
+    # 1. Crear libro base con dataset de ventas
+    create_excel(
+        xlsx_path,
+        sheets=[{
+            "name": "Ventas",
+            "headers": ["Vendedor", "Region", "Mes", "Monto"],
+            "rows": [
+                ["Ana", "Norte", "Q1", 1000],
+                ["Beto", "Norte", "Q1", 1500],
+                ["Carlos", "Sur", "Q1", 2000],
+                ["Ana", "Norte", "Q2", 1200],
+                ["Beto", "Sur", "Q2", 800],
+                ["Carlos", "Sur", "Q2", 2200],
+            ],
+        }]
+    )
+    assert os.path.exists(xlsx_path)
+
+    # 2. Agregar tabla dinámica con op add_pivot (Region x Monto SUM)
+    res_edit = edit_excel(xlsx_path, operations=[
+        {
+            "op": "add_pivot",
+            "sheet": "Ventas",
+            "rows": "Region",
+            "values": "Monto",
+            "agg": "sum",
+            "pivot_sheet": "Pivot_Region",
+        },
+        {
+            "op": "add_pivot",
+            "sheet": "Ventas",
+            "rows": "Region",
+            "cols": "Mes",
+            "values": "Monto",
+            "agg": "sum",
+            "pivot_sheet": "Pivot_Region_Mes",
+        },
+    ])
+    assert res_edit["status"] == "ok"
+    assert "Pivot_Region" in res_edit["sheets_modified"]
+    assert "Pivot_Region_Mes" in res_edit["sheets_modified"]
+
+    # 3. Verificar en disco que las hojas pivot existen con formato y datos numéricos exactos
+    wb = openpyxl.load_workbook(xlsx_path)
+    assert "Pivot_Region" in wb.sheetnames
+    assert "Pivot_Region_Mes" in wb.sheetnames
+
+    # Hoja 1: Pivot_Region
+    ws1 = wb["Pivot_Region"]
+    # Fila 1 = Encabezados ('Region', 'Monto')
+    assert ws1.cell(1, 1).value == "Region"
+    assert ws1.cell(1, 2).value == "Monto"
+    # Fila 2 = Norte: 1000 + 1500 + 1200 = 3700
+    assert ws1.cell(2, 1).value == "Norte"
+    assert ws1.cell(2, 2).value == 3700
+    # Fila 3 = Sur: 2000 + 800 + 2200 = 5000
+    assert ws1.cell(3, 1).value == "Sur"
+    assert ws1.cell(3, 2).value == 5000
+    # Autofilter activo
+    assert ws1.auto_filter.ref is not None
+
+    # Hoja 2: Pivot_Region_Mes (filas Region, columnas Mes)
+    ws2 = wb["Pivot_Region_Mes"]
+    headers2 = [ws2.cell(1, c).value for c in range(1, ws2.max_column + 1)]
+    assert "Region" in headers2 and "Q1" in headers2 and "Q2" in headers2
+    q1_idx = headers2.index("Q1") + 1
+    q2_idx = headers2.index("Q2") + 1
+
+    # Norte: Q1 = 1000 + 1500 = 2500; Q2 = 1200
+    assert ws2.cell(2, 1).value == "Norte"
+    assert ws2.cell(2, q1_idx).value == 2500
+    assert ws2.cell(2, q2_idx).value == 1200
+
+    # Sur: Q1 = 2000; Q2 = 800 + 2200 = 3000
+    assert ws2.cell(3, 1).value == "Sur"
+    assert ws2.cell(3, q1_idx).value == 2000
+    assert ws2.cell(3, q2_idx).value == 3000
+    assert ws2.auto_filter.ref is not None
+    wb.close()
+
+    # 4. Verificar soporte en create_excel directamente vía especificación pivot
+    xlsx_direct = str(tmp_path / "pivot_direct.xlsx")
+    create_excel(
+        xlsx_direct,
+        sheets=[
+            {
+                "name": "Datos",
+                "headers": ["Categoria", "Unidades"],
+                "rows": [["Hardware", 50], ["Software", 120], ["Hardware", 75]],
+            },
+            {
+                "name": "Pivot_Hardware",
+                "pivot": {
+                    "source_sheet": "Datos",
+                    "rows": "Categoria",
+                    "values": "Unidades",
+                    "agg": "sum",
+                },
+            },
+        ],
+    )
+    wb_d = openpyxl.load_workbook(xlsx_direct)
+    assert "Pivot_Hardware" in wb_d.sheetnames
+    ws_d = wb_d["Pivot_Hardware"]
+    assert ws_d.cell(2, 1).value == "Hardware"
+    assert ws_d.cell(2, 2).value == 125
+    assert ws_d.cell(3, 1).value == "Software"
+    assert ws_d.cell(3, 2).value == 120
+    wb_d.close()
+
+
+def test_create_book_core(tmp_path):
+    """Test obligatorio v0.9.0 (B): create_book multi-capítulo PDF con portada, TOC automático y EPUB opcional."""
+    import fitz
+    from office_worker.core.book import create_book
+
+    out_pdf = str(tmp_path / "libro_corporativo.pdf")
+    chapters = [
+        {
+            "title": "Introducción y Alcance",
+            "content_html": "<p>Primer capítulo sobre los objetivos corporativos del año 2026.</p>",
+        },
+        {
+            "title": "Metodología y Arquitectura",
+            "content_html": "<p>Segundo capítulo explicando el diseño técnico y los pipelines documentales.</p>",
+        },
+        {
+            "title": "Conclusiones y Próximos Pasos",
+            "content_html": "<p>Tercer capítulo con los acuerdos y roadmap de ejecución.</p>",
+        },
+    ]
+
+    res = create_book(
+        out_path=out_pdf,
+        title="Manual de Procedimientos 2026",
+        author="Julio Cardozo",
+        chapters=chapters,
+        theme="corporate-blue",
+        epub=True,
+    )
+
+    assert res["status"] == "ok"
+    assert os.path.exists(res["path"])
+    assert res["chapters_count"] == 3
+    assert res["bytes"] > 1000
+
+    # 1. Verificar PDF: portada, TOC, y capítulos
+    doc = fitz.open(res["path"])
+    assert len(doc) >= 5, f"Se esperaban al menos 5 páginas (portada + TOC + 3 caps), hay {len(doc)}"
+
+    # Portada en página 1
+    cover_text = doc[0].get_text()
+    assert "Manual de Procedimientos 2026" in " ".join(cover_text.split())
+    assert "Julio Cardozo" in cover_text
+
+    # TOC en página 2
+    toc_text = doc[1].get_text()
+    assert "Índice General" in toc_text or "Indice General" in toc_text
+    assert "Capítulo 1: Introducción y Alcance" in toc_text
+    assert "Capítulo 2: Metodología y Arquitectura" in toc_text
+    assert "Capítulo 3: Conclusiones y Próximos Pasos" in toc_text
+
+    # Capítulos numerados y con contenido
+    chap1_text = doc[2].get_text()
+    assert "Capítulo 1" in chap1_text or "CAPÍTULO 1" in chap1_text
+    assert "Introducción y Alcance" in chap1_text
+
+    chap2_text = doc[3].get_text()
+    assert "Capítulo 2" in chap2_text or "CAPÍTULO 2" in chap2_text
+    assert "Metodología y Arquitectura" in chap2_text
+
+    chap3_text = doc[4].get_text()
+    assert "Capítulo 3" in chap3_text or "CAPÍTULO 3" in chap3_text
+    assert "Conclusiones y Próximos Pasos" in chap3_text
+    doc.close()
+
+    # 2. Verificar exportación EPUB y magic bytes PK
+    if "epub_path" in res and res["epub_path"]:
+        assert os.path.exists(res["epub_path"])
+        assert res["epub_bytes"] > 500
+        with open(res["epub_path"], "rb") as f_epub:
+            header = f_epub.read(4)
+            assert header == b"PK\x03\x04" or header[:2] == b"PK", f"Magic bytes PK inválidos en EPUB: {header}"
+
+
+def test_render_document_design_mode_premium(tmp_path):
+    """Test obligatorio v0.9.0 (C): render_document con design_mode='premium' vs 'standard' produce bytes distintos."""
+    out_std = str(tmp_path / "doc_standard.pdf")
+    out_prem = str(tmp_path / "doc_premium.pdf")
+
+    html_sample = """
+    <h1>Informe Trimestral de Gestión</h1>
+    <div class="kicker">Dirección General</div>
+    <h2>Resumen de Operaciones</h2>
+    <p>Este informe detalla el progreso y desempeño financiero alcanzado durante el período.</p>
+    <div class="card"><strong>Nota:</strong> Los indicadores superaron las expectativas.</div>
+    <table>
+      <thead><tr><th>Indicador</th><th>Valor</th></tr></thead>
+      <tbody><tr><td>Crecimiento</td><td>+18%</td></tr></tbody>
+    </table>
+    """
+
+    # Modo estándar
+    path_std = render_pdf(html_sample, out_std, design_mode="standard", theme="corporate-blue")
+    assert os.path.exists(path_std)
+    bytes_std = open(path_std, "rb").read()
+    assert bytes_std[:5] == b"%PDF-"
+
+    # Modo premium
+    path_prem = render_pdf(html_sample, out_prem, design_mode="premium", theme="corporate-blue")
+    assert os.path.exists(path_prem)
+    bytes_prem = open(path_prem, "rb").read()
+    assert bytes_prem[:5] == b"%PDF-"
+
+    # Verificar que son distintos visualmente (bytes diferentes)
+    assert bytes_std != bytes_prem, "design_mode='premium' debe producir un archivo PDF visual y binariamente distinto al estándar"
+    assert len(bytes_prem) > 500
+    assert len(bytes_std) > 500
+
+
+def test_doctor_environment_core(tmp_path):
+    """Test obligatorio v0.9.0 (D): check_environment y CLI owi doctor reportan capacidades e install_hints sin efectos secundarios."""
+    import subprocess
+    from office_worker.core.doctor import check_environment, detect_os, get_install_hint
+
+    # 1. Ejecutar check_environment en core
+    env_info = check_environment()
+    assert env_info["status"] == "ok"
+    assert "os" in env_info and isinstance(env_info["os"], str)
+    assert "package_manager" in env_info and isinstance(env_info["package_manager"], str)
+    assert "capabilities" in env_info and isinstance(env_info["capabilities"], dict)
+
+    caps = env_info["capabilities"]
+    required_keys = [
+        "convert_to_pdf", "pdf_ocr", "poppler", "render_document",
+        "pdf_core", "pdf_to_excel", "excel_core", "word_core",
+        "pptx_core", "pandas_pivot", "book_epub",
+    ]
+    for k in required_keys:
+        assert k in caps, f"Falta capability '{k}' en reporte de doctor"
+        cap = caps[k]
+        assert "active" in cap and isinstance(cap["active"], bool)
+        assert "name" in cap and isinstance(cap["name"], str)
+        assert "required_for" in cap and isinstance(cap["required_for"], str)
+        assert "install_hint" in cap and isinstance(cap["install_hint"], str)
+
+        # Si no está activo, debe proveer install_hint no vacío
+        if not cap["active"]:
+            assert len(cap["install_hint"]) > 0, f"Capability inactiva '{k}' debe tener un comando install_hint"
+
+    # 2. Verificar get_install_hint determinista para Linux apt
+    hint_libreoffice = get_install_hint("convert_to_pdf", "apt")
+    assert "apt" in hint_libreoffice and "libreoffice" in hint_libreoffice
+    hint_tesseract = get_install_hint("pdf_ocr", "apt")
+    assert "apt" in hint_tesseract and "tesseract" in hint_tesseract
+
+    # 3. CLI owi doctor ejecutado como subproceso
+    cmd = [sys.executable, "-m", "office_worker.cli", "doctor"]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    assert proc.returncode == 0
+    import json
+    cli_data = json.loads(proc.stdout)
+    assert cli_data["status"] == "ok"
+    assert "capabilities" in cli_data
+    assert "convert_to_pdf" in cli_data["capabilities"]
+
+
+
+
 
 
 

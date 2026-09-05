@@ -128,3 +128,112 @@ def css_vars(theme: dict) -> str:
         f"--ow-row-alt:{theme['row_alt']}; --ow-bg:{theme['bg']};"
         f"--ow-font-title:{theme['font_title']}; --ow-font-body:{theme['font_body']}; }}"
     )
+
+
+# CSS para design_mode="premium": tipografía editorial, jerarquía visual reforzada y espaciado refinado.
+PREMIUM_CSS = """
+@page {
+  size: A4;
+  margin: 2.2cm 2cm 2.4cm 2cm;
+  @bottom-center {
+    content: "—  " counter(page) " de " counter(pages) "  —";
+    font-size: 8.5pt;
+    letter-spacing: 0.1em;
+    color: var(--ow-muted);
+  }
+}
+* { box-sizing: border-box; }
+body {
+  font-family: var(--ow-font-body);
+  font-size: 10.5pt;
+  line-height: 1.65;
+  color: var(--ow-text);
+}
+h1 {
+  font-family: var(--ow-font-title);
+  font-size: 22pt;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ow-primary);
+  border-bottom: 2.5pt solid var(--ow-primary);
+  padding-bottom: 8pt;
+  margin-top: 0;
+  margin-bottom: 16pt;
+}
+h2 {
+  font-family: var(--ow-font-title);
+  font-size: 14pt;
+  font-weight: 700;
+  color: var(--ow-primary);
+  border-left: 3.5pt solid var(--ow-accent);
+  padding-left: 8pt;
+  margin-top: 20pt;
+  margin-bottom: 8pt;
+}
+h3 {
+  font-family: var(--ow-font-title);
+  font-size: 11.5pt;
+  font-weight: 600;
+  color: var(--ow-primary);
+  margin-top: 14pt;
+  margin-bottom: 4pt;
+}
+p {
+  margin-top: 0;
+  margin-bottom: 10pt;
+  orphans: 3;
+  widows: 3;
+}
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 9pt;
+  margin: 16pt 0;
+  border: 1pt solid #cbd5e1;
+  border-radius: 4pt;
+  overflow: hidden;
+}
+th {
+  background: var(--ow-primary);
+  color: #ffffff;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 8pt;
+  padding: 7pt 10pt;
+  text-align: left;
+}
+td {
+  padding: 6pt 10pt;
+  border-bottom: 0.5pt solid #e2e8f0;
+  vertical-align: top;
+}
+tr:last-child td {
+  border-bottom: none;
+}
+tr:nth-child(even) td {
+  background: var(--ow-row-alt);
+}
+.kicker {
+  text-transform: uppercase;
+  font-size: 8.5pt;
+  letter-spacing: 0.15em;
+  font-weight: 700;
+  color: var(--ow-accent);
+  margin-bottom: 4pt;
+}
+.card, .callout {
+  background: var(--ow-row-alt);
+  border-left: 3.5pt solid var(--ow-accent);
+  border-radius: 0 4pt 4pt 0;
+  padding: 10pt 14pt;
+  margin: 12pt 0;
+  font-size: 9.5pt;
+}
+.muted {
+  color: var(--ow-muted);
+  font-size: 9pt;
+}
+"""
+

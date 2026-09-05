@@ -113,6 +113,162 @@ def _apply_autofilter(ws, filter_range: str | None = None) -> None:
     ws.auto_filter.ref = filter_range
 
 
+def _apply_pivot_table(wb, op: dict[str, Any], default_theme: str | None = None) -> str:
+    """Genera una tabla dinámica real vía pandas pivot_table y la escribe en una hoja nueva con formato y autofiltro."""
+    import pandas as pd
+    from .themes import load_theme
+
+    sh_name = op.get("sheet") or op.get("source_sheet")
+    ws = wb[sh_name] if (sh_name and sh_name in wb.sheetnames) else wb.active
+
+    data_range = op.get("data_range")
+    if data_range and "!" in data_range:
+        prefix, rng = data_range.split("!", 1)
+        if prefix in wb.sheetnames:
+            ws = wb[prefix]
+        data_range = rng
+
+    if data_range and ":" in data_range:
+        min_c, min_r, max_c, max_r = range_boundaries(data_range)
+        rows_data = []
+        for r in ws.iter_rows(min_row=min_r, max_row=max_r, min_col=min_c, max_col=max_c, values_only=True):
+            if any(c is not None and str(c).strip() != "" for c in r):
+                rows_data.append(list(r))
+    else:
+        start_r = 1
+        if ws.max_row >= 2 and ws.max_column >= 2:
+            if ws.cell(1, 2).value is None and ws.cell(2, 1).value is not None:
+                start_r = 2
+        rows_data = []
+        for r in ws.iter_rows(min_row=start_r, values_only=True):
+            if any(c is not None and str(c).strip() != "" for c in r):
+                rows_data.append(list(r))
+
+    if len(rows_data) < 2:
+        raise ValueError(f"Datos insuficientes en la hoja '{ws.title}' para generar tabla dinámica (se requiere encabezado y datos).")
+
+    raw_headers = rows_data[0]
+    headers = [str(h) if h is not None and str(h).strip() != "" else f"Col{i}" for i, h in enumerate(raw_headers, 1)]
+    df = pd.DataFrame(rows_data[1:], columns=headers)
+
+    # Rows (obligatorio)
+    rows_param = op.get("rows")
+    if not rows_param:
+        raise ValueError("El parámetro 'rows' es obligatorio para la tabla dinámica (add_pivot).")
+    if isinstance(rows_param, str):
+        rows_list = [r.strip() for r in rows_param.split(",") if r.strip()]
+    else:
+        rows_list = list(rows_param)
+
+    # Columns (opcional)
+    cols_param = op.get("cols") or op.get("columns")
+    if cols_param:
+        if isinstance(cols_param, str):
+            cols_list = [c.strip() for c in cols_param.split(",") if c.strip()]
+        else:
+            cols_list = list(cols_param)
+    else:
+        cols_list = None
+
+    # Values (obligatorio)
+    val_param = op.get("values") or op.get("value")
+    if not val_param:
+        raise ValueError("El parámetro 'values' es obligatorio para la tabla dinámica (add_pivot).")
+    if isinstance(val_param, str):
+        val_list = [v.strip() for v in val_param.split(",") if v.strip()]
+    else:
+        val_list = list(val_param)
+
+    # Agg function (sum, count, avg)
+    agg_raw = str(op.get("agg") or op.get("aggfunc") or "sum").lower().strip()
+    if agg_raw in ("avg", "mean", "promedio"):
+        agg_func = "mean"
+    elif agg_raw in ("count", "conteo", "n"):
+        agg_func = "count"
+    else:
+        agg_func = "sum"
+
+    for v in val_list:
+        if v in df.columns and agg_func in ("sum", "mean"):
+            df[v] = pd.to_numeric(df[v], errors="coerce").fillna(0)
+
+    pt = pd.pivot_table(
+        df,
+        index=rows_list,
+        columns=cols_list,
+        values=val_list if len(val_list) > 1 else val_list[0],
+        aggfunc=agg_func,
+        fill_value=0,
+    )
+
+    if cols_list:
+        pt_headers = [str(r) for r in rows_list]
+        for col_name in pt.columns:
+            if isinstance(col_name, tuple):
+                parts = [str(c) for c in col_name if str(c).strip() != ""]
+                pt_headers.append(" - ".join(parts))
+            else:
+                pt_headers.append(str(col_name))
+
+        pt_rows = []
+        for idx_val, row_series in pt.iterrows():
+            r = list(idx_val) if isinstance(idx_val, tuple) else [idx_val]
+            r.extend(row_series.tolist())
+            pt_rows.append(r)
+    else:
+        df_res = pt.reset_index()
+        pt_headers = [str(c) for c in df_res.columns]
+        pt_rows = df_res.values.tolist()
+
+    base_pivot_name = op.get("pivot_sheet") or op.get("new_sheet") or f"Pivot_{ws.title}"
+    pivot_title = base_pivot_name[:31]
+    count = 1
+    while pivot_title in wb.sheetnames:
+        pivot_title = f"{base_pivot_name[:28]}_{count}"
+        count += 1
+
+    pivot_ws = wb.create_sheet(title=pivot_title)
+
+    th = load_theme(op.get("theme") or default_theme)
+    primary = _hex(th["primary"])
+    alt = _hex(th.get("row_alt", "#F5F7FA"))
+    thin = Side(style="thin", color="FFC8D4E0")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for c_idx, h_text in enumerate(pt_headers, start=1):
+        cell = pivot_ws.cell(1, c_idx, h_text)
+        cell.font = Font(bold=True, color="FFFFFFFF")
+        cell.fill = PatternFill("solid", fgColor=primary)
+        cell.alignment = Alignment(horizontal="left")
+        cell.border = border
+
+    for r_offset, r_data in enumerate(pt_rows, start=2):
+        for c_idx, val in enumerate(r_data, start=1):
+            cell = pivot_ws.cell(r_offset, c_idx, val)
+            cell.border = border
+            cell.alignment = Alignment(vertical="top")
+            if r_offset % 2 == 1:
+                cell.fill = PatternFill("solid", fgColor=alt)
+            if isinstance(val, float):
+                cell.number_format = "#,##0.00"
+            elif isinstance(val, int):
+                cell.number_format = "#,##0"
+
+    for c in range(1, len(pt_headers) + 1):
+        maxlen = max([len(str(pt_headers[c - 1]))] + [len(str(r[c - 1])) for r in pt_rows if c - 1 < len(r)] or [8])
+        pivot_ws.column_dimensions[get_column_letter(c)].width = min(max(maxlen + 3, 10), 40)
+
+    last_col = get_column_letter(len(pt_headers))
+    last_row = max(len(pt_rows) + 1, 2)
+    t_style = op.get("table_style")
+    if t_style:
+        _apply_table_style(pivot_ws, table_style=t_style, table_range=f"A1:{last_col}{last_row}")
+    else:
+        _apply_autofilter(pivot_ws, filter_range=f"A1:{last_col}{last_row}")
+
+    return pivot_title
+
+
 def create_excel(
     out_path: str,
     title: str = "",
@@ -121,9 +277,9 @@ def create_excel(
     table_style: str | None = None,
     auto_filter: bool = False,
 ) -> str:
-    """Crea un archivo .xlsx profesional con soporte multi-hoja, tablas estructuradas, autofiltro y gráficos.
+    """Crea un archivo .xlsx profesional con soporte multi-hoja, tablas estructuradas, autofiltro, gráficos y tablas dinámicas (pivot).
 
-    - sheets: lista de dicts {"name":"Hoja", "headers":[...], "rows":[[...], ...], "charts":[...], "table_style":..., "auto_filter":...}
+    - sheets: lista de dicts {"name":"Hoja", "headers":[...], "rows":[[...], ...], "charts":[...], "table_style":..., "auto_filter":..., "pivot":{...}}
     - table_style: estilo opcional de tabla estructurada (ej: "TableStyleMedium9", "TableStyleLight1").
     - auto_filter: si es True, activa autofiltro en los encabezados.
     - theme: paleta corporativa aplicada a encabezados y filas alternas.
@@ -151,6 +307,14 @@ def create_excel(
         return out_path
 
     for sh in sheets:
+        if sh.get("pivot"):
+            p_spec = dict(sh["pivot"])
+            p_spec.setdefault("pivot_sheet", sh.get("name", "Pivot"))
+            p_spec.setdefault("theme", theme)
+            p_spec.setdefault("table_style", sh.get("table_style", table_style))
+            _apply_pivot_table(wb, p_spec, default_theme=theme)
+            continue
+
         ws = wb.create_sheet(sh.get("name", "Hoja")[:31])
         headers = sh.get("headers", [])
         rows = sh.get("rows", [])
@@ -221,6 +385,7 @@ def edit_excel(
     - {"op": "add_chart", "sheet"?: str, "chart_type": "bar"|"line"|"pie", "title"?: str, "data_range"?: str, "categories_range"?: str, "target_cell"?: str}
     - {"op": "add_table", "sheet"?: str, "name"?: str, "table_style"?: str, "range"?: str}
     - {"op": "auto_filter", "sheet"?: str, "range"?: str}
+    - {"op": "add_pivot", "sheet"?: str, "rows": list|str, "cols"?: list|str, "values": list|str, "agg"?: "sum"|"count"|"avg", "pivot_sheet"?: str}
 
     Preserva macros VBA si el archivo es .xlsm (mediante keep_vba=True).
     Devuelve dict con fidelity honesta ("rich"|"clean"), warnings y ruta absoluta.
@@ -311,6 +476,10 @@ def edit_excel(
         elif op_name in ("auto_filter", "autofilter"):
             f_range = op.get("range")
             _apply_autofilter(ws, filter_range=f_range)
+
+        elif op_name in ("add_pivot", "pivot", "pivot_table"):
+            p_title = _apply_pivot_table(wb, op)
+            sheets_touched.add(p_title)
 
         else:
             raise ValueError(f"Operación de edición no soportada: '{op_name}'")

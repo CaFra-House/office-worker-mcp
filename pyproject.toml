@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "office-worker-mcp"
-version = "0.8.0"
+version = "0.9.0"
 description = "The Office Worker — your agent's document clerk: Word, Excel, PowerPoint & PDF with real design (templates + themes + PDF input)."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Julio Cardozo" }]
-keywords = ["mcp", "office", "pdf", "docx", "xlsx", "pptx", "documents", "agent", "templates", "signature", "compression", "batch", "edit", "charts", "preview", "vision", "redact", "rag", "security", "skills", "flatten", "mail-merge", "markdown", "diff", "compliance", "encryption", "verify"]
+keywords = ["mcp", "office", "pdf", "docx", "xlsx", "pptx", "documents", "agent", "templates", "signature", "compression", "batch", "edit", "charts", "preview", "vision", "redact", "rag", "security", "skills", "flatten", "mail-merge", "markdown", "diff", "compliance", "encryption", "verify", "pivot", "book", "epub", "doctor"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -40,6 +40,8 @@ dependencies = [
     "reportlab>=4.0",
     "pandas>=2.0",
     "msoffcrypto-tool>=5.4",
+    "cryptography>=42.0.0",
+    "pyhanko>=0.25.0",
 ]
 
 # PPTX editable requiere html-to-pptx + Playwright/Chromium (pesado, con navegador).
@@ -48,6 +50,7 @@ dependencies = [
 pptx = ["html-to-pptx>=0.3", "playwright>=1.40"]
 ocr = ["pillow>=10", "pytesseract>=0.3.10"]
 sign = ["pyhanko>=0.25.0", "cryptography>=42.0.0"]
+book = ["ebooklib>=0.18"]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
@@ -58,6 +61,7 @@ dev = [
     "pytesseract>=0.3.10",
     "pyhanko>=0.25.0",
     "cryptography>=42.0.0",
+    "ebooklib>=0.18",
 ]
 
 [project.scripts]

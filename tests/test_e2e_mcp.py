@@ -24,7 +24,7 @@ async def test_office_worker_mcp_e2e(tmp_path):
         async with ClientSession(r, w) as s:
             await s.initialize()
             tools = [t.name for t in (await s.list_tools()).tools]
-            assert len(tools) == 27 and "document_diff" in tools and "scrub_metadata" in tools and "protect_office" in tools and "verify_pdf_signature" in tools and "render_document" in tools and "pdf_preview" in tools and "pdf_redact" in tools and "pdf_extract_structured" in tools and "mail_merge" in tools and "csv_excel_convert" in tools, f"tools inesperadas: {tools}"
+            assert len(tools) == 29 and "create_book" in tools and "environment_status" in tools and "document_diff" in tools and "scrub_metadata" in tools and "protect_office" in tools and "verify_pdf_signature" in tools and "render_document" in tools and "pdf_preview" in tools and "pdf_redact" in tools and "pdf_extract_structured" in tools and "mail_merge" in tools and "csv_excel_convert" in tools, f"tools inesperadas: {tools}"
 
             async def call(name, args): return json.loads((await s.call_tool(name, args)).content[0].text)
 
@@ -533,6 +533,11 @@ async def test_office_worker_mcp_e2e(tmp_path):
             assert "next_steps" in results["xlsx"] and len(results["xlsx"]["next_steps"]) > 0
             assert "next_steps" in results["sign"] and len(results["sign"]["next_steps"]) > 0
             assert "next_steps" in r_redact and len(r_redact["next_steps"]) > 0
+            assert "next_steps" in r_mm and len(r_mm["next_steps"]) > 0
+            if "convert" in results:
+                assert "next_steps" in results["convert"] and len(results["convert"]["next_steps"]) > 0
+            if results["pptx"].get("status") == "ok":
+                assert "next_steps" in results["pptx"] and len(results["pptx"]["next_steps"]) > 0
 
             # 33 document_diff E2E
             doc_mod = f"{d}/b_modified.docx"
@@ -640,6 +645,26 @@ async def test_office_worker_mcp_e2e(tmp_path):
             assert "Julio Cardozo E2E" in (r_ver_dig["signer"] or "")
             assert r_ver_dig["reason"] == "Validación Técnica E2E"
 
+            # 36.c Digital signed PDF with auto_generate_test_cert
+            signed_auto_pdf = f"{d}/signed_auto_e2e.pdf"
+            r_sign_auto = await call("sign_pdf", {
+                "input_pdf": results["pdf"]["path"],
+                "output": signed_auto_pdf,
+                "auto_generate_test_cert": True,
+                "reason": "Test E2E Auto Cert",
+            })
+            assert r_sign_auto["status"] == "ok"
+            assert "next_steps" in r_sign_auto and len(r_sign_auto["next_steps"]) > 0
+
+            r_ver_auto = await call("verify_pdf_signature", {
+                "input": signed_auto_pdf,
+            })
+            assert r_ver_auto["status"] == "ok"
+            assert r_ver_auto["has_signature"] is True
+            assert r_ver_auto["valid"] is True
+            assert r_ver_auto["intact"] is True
+            assert "Office Worker Test Certificate (Non-Production)" in (r_ver_auto["signer"] or "")
+
             # 37 office_batch con tools v0.8.0
             r_batch_v8 = await call("office_batch", {
                 "operations": [
@@ -662,5 +687,103 @@ async def test_office_worker_mcp_e2e(tmp_path):
             assert r_batch_v8["status"] == "ok"
             assert r_batch_v8["total"] == 2
             assert r_batch_v8["succeeded"] == 2
+
+            # 38 edit_excel add_pivot E2E
+            pivot_file = f"{d}/pivot_e2e.xlsx"
+            await call("create_excel", {
+                "out_path": pivot_file,
+                "title": "Ventas E2E",
+                "sheets_json": json.dumps([{
+                    "name": "Ventas",
+                    "headers": ["Region", "Producto", "Monto"],
+                    "rows": [
+                        ["Norte", "Alpha", 100],
+                        ["Sur", "Alpha", 150],
+                        ["Norte", "Beta", 200],
+                        ["Sur", "Beta", 250],
+                    ]
+                }])
+            })
+            r_xl_pivot = await call("edit_excel", {
+                "input_path": pivot_file,
+                "operations": [
+                    {
+                        "op": "add_pivot",
+                        "sheet": "Ventas",
+                        "rows": "Region",
+                        "cols": "Producto",
+                        "values": "Monto",
+                        "agg": "sum",
+                        "pivot_sheet": "Pivot_Ventas",
+                    }
+                ]
+            })
+            assert r_xl_pivot["status"] == "ok", r_xl_pivot
+            assert "Pivot_Ventas" in r_xl_pivot.get("sheets_modified", [])
+            assert os.path.exists(pivot_file)
+
+            # 39 create_book E2E (PDF + EPUB)
+            r_book = await call("create_book", {
+                "output": f"{d}/libro_e2e.pdf",
+                "title": "Manual de Gestión Empresarial",
+                "author": "Julio Cardozo",
+                "chapters": [
+                    {"title": "Visión Estratégica", "content_html": "<p>Contenido del capítulo 1.</p>"},
+                    {"title": "Operaciones y MCP", "content_html": "<p>Contenido del capítulo 2.</p>"},
+                    {"title": "Auditoría Continua", "content_html": "<p>Contenido del capítulo 3.</p>"},
+                ],
+                "theme": "corporate-blue",
+                "epub": True,
+            })
+            assert r_book["status"] == "ok"
+            assert os.path.exists(r_book["path"])
+            assert r_book["chapters_count"] == 3
+            assert "next_steps" in r_book and len(r_book["next_steps"]) > 0
+            if "epub_path" in r_book and r_book["epub_path"]:
+                assert os.path.exists(r_book["epub_path"])
+                with open(r_book["epub_path"], "rb") as f_ep:
+                    assert f_ep.read(2) == b"PK"
+
+            # 40 render_document con design_mode='premium' E2E
+            r_prem = await call("render_document", {
+                "template_html": "<h1>Informe Premium E2E</h1><div class='kicker'>Dirección</div><p>Texto editorial.</p>",
+                "out_path": f"{d}/doc_premium_e2e.pdf",
+                "theme": "corporate-blue",
+                "design_mode": "premium",
+            })
+            assert r_prem["status"] == "ok"
+            assert os.path.exists(r_prem["path"])
+            assert open(r_prem["path"], "rb").read(5) == b"%PDF-"
+            assert r_prem["bytes"] != results["pdf"]["bytes"]
+
+            # 41 environment_status E2E
+            r_env = await call("environment_status", {})
+            assert r_env["status"] == "ok"
+            assert "os" in r_env
+            assert "capabilities" in r_env
+            assert "render_document" in r_env["capabilities"]
+            assert "convert_to_pdf" in r_env["capabilities"]
+
+            # 42 office_batch con tools v0.9.0
+            r_batch_v9 = await call("office_batch", {
+                "operations": [
+                    {
+                        "tool": "environment_status",
+                        "args": {},
+                    },
+                    {
+                        "tool": "render_document",
+                        "args": {
+                            "template_html": "<h1>Batch Premium</h1>",
+                            "out_path": f"{d}/batch_premium.pdf",
+                            "design_mode": "premium",
+                        },
+                    },
+                ]
+            })
+            assert r_batch_v9["status"] == "ok"
+            assert r_batch_v9["total"] == 2
+            assert r_batch_v9["succeeded"] == 2
+
 
 
