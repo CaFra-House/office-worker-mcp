@@ -7,7 +7,7 @@
 
 **The complete document MCP for AI agents.** Generate, edit, secure, audit and extract professional **PDF, Word, Excel and PowerPoint** documents — fully local, zero API keys, deterministic and safe. Built for Hermes, Claude and Cursor via [MCP](https://modelcontextprotocol.io).
 
-<!-- mcp-name: io.github.cafra-house/office-worker-mcp -->
+<!-- mcp-name: io.github.CaFra-House/office-worker-mcp -->
 
 ```bash
 pip install office-worker-mcp          # core: MCP server + CLI 'owi'

@@ -1,11 +1,26 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.cafra-house/office-worker-mcp",
+  "name": "io.github.CaFra-House/office-worker-mcp",
   "title": "The Office Worker",
-  "description": "The complete local-first document MCP for AI agents: create, read, extract, convert, secure and sign PDF/Word/Excel/PPTX with zero API keys.",
-  "repository": { "type": "git", "url": "https://github.com/CaFra-House/office-worker-mcp" },
-  "version_detail": { "version": "0.9.2", "release_date": "2026-09-05" },
+  "description": "Local-first document MCP for AI agents: create, read, secure and sign PDF/Word/Excel/PPTX.",
+  "repository": {
+    "source": "github",
+    "url": "https://github.com/CaFra-House/office-worker-mcp",
+    "id": "1358126077"
+  },
+  "version_detail": {
+    "version": "0.9.2",
+    "release_date": "2026-09-05"
+  },
   "packages": [
-    { "registryType": "pypi", "identifier": "office-worker-mcp", "version": "0.9.2", "transport": { "type": "stdio" } }
-  ]
+    {
+      "registryType": "pypi",
+      "identifier": "office-worker-mcp",
+      "version": "0.9.2",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "version": "0.9.2"
 }
