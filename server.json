@@ -9,18 +9,18 @@
     "id": "1358126077"
   },
   "version_detail": {
-    "version": "0.9.3",
+    "version": "0.9.4",
     "release_date": "2026-09-05"
   },
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "office-worker-mcp",
-      "version": "0.9.3",
+      "version": "0.9.4",
       "transport": {
         "type": "stdio"
       }
     }
   ],
-  "version": "0.9.3"
+  "version": "0.9.4"
 }
