@@ -31,21 +31,24 @@ def _env(template_dir=None):
         return Environment(loader=FileSystemLoader(template_dir), undefined=StrictUndefined, autoescape=False)
     return Environment(loader=BaseLoader(), undefined=StrictUndefined, autoescape=False)
 
-def render_pdf(template_html_or_path, out_path, data=None, theme=None, template_dir=None):
+def render_pdf(template_html_or_path, out_path, data=None, theme=None, template_dir=None, logo=None):
     """Rellena una plantilla HTML (Jinja) con `data` + `theme` y exporta a PDF vía WeasyPrint.
 
     - template_html_or_path: string HTML (con placeholders {{ }}) o ruta a un .html.
     - data: dict de variables para Jinja. Si hay lista 'rows' con 'headers', genera tabla.
     - theme: dict o nombre/ruta (ver themes.load_theme). None → tema ADEN por defecto.
+    - logo: ruta a archivo de imagen (PNG/JPG) a insertar en la cabecera vía CSS WeasyPrint.
     Devuelve la ruta absoluta del PDF generado. Crea out_path si no existe.
     """
+    import pathlib
     from weasyprint import HTML
 
     th = load_theme(theme)
 
     # ¿es ruta a archivo o HTML inline?
     if template_html_or_path and os.path.exists(str(template_html_or_path)):
-        tpl_text = open(template_html_or_path).read()
+        with open(template_html_or_path, "r", encoding="utf-8") as f:
+            tpl_text = f.read()
     else:
         tpl_text = str(template_html_or_path or "")
 
@@ -55,10 +58,28 @@ def render_pdf(template_html_or_path, out_path, data=None, theme=None, template_
     # helper opcional para tablas declarativas en la plantilla via contexto simple
     ctx = dict(data or {})
 
+    logo_css = ""
+    if logo:
+        logo_path = os.path.abspath(os.path.expanduser(str(logo)))
+        if not os.path.exists(logo_path):
+            raise FileNotFoundError(f"Logo no encontrado: {logo_path}")
+        logo_uri = pathlib.Path(logo_path).as_uri()
+        logo_css = f"""
+@page {{
+  margin-top: 2.2cm;
+  @top-right {{
+    content: url('{logo_uri}');
+    max-height: 1.2cm;
+    vertical-align: middle;
+  }}
+}}
+"""
+        ctx.setdefault("logo", logo_uri)
+
     body = tmpl.render(**ctx)
 
     html_doc = f"""<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
-<style>{css_vars(th)}{_BASE_CSS}</style></head><body>{body}</body></html>"""
+<style>{css_vars(th)}{_BASE_CSS}{logo_css}</style></head><body>{body}</body></html>"""
 
     out_path = os.path.abspath(os.path.expanduser(out_path))
     os.makedirs(os.path.dirname(out_path), exist_ok=True)

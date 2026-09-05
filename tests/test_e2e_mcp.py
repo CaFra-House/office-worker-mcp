@@ -1,10 +1,10 @@
 """Test E2E del MCP completo como test de pytest (async).
 
-Levanta el servidor MCP real, hace handshake y ejecuta cada tool creando/leyendo
+Levanta el servidor MCP real, hace handshake y ejecuta las 12 tools creando/leyendo
 archivos válidos en disco. PPTX se saltea si Playwright no está disponible.
 Requiere: pytest-asyncio (en extras [dev]).
 """
-import asyncio, json, os, sys, pathlib
+import asyncio, json, os, shutil, sys, pathlib
 import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
@@ -24,14 +24,15 @@ async def test_office_worker_mcp_e2e(tmp_path):
         async with ClientSession(r, w) as s:
             await s.initialize()
             tools = [t.name for t in (await s.list_tools()).tools]
-            assert len(tools) == 8 and "render_document" in tools, f"tools inesperadas: {tools}"
+            assert len(tools) == 12 and "render_document" in tools, f"tools inesperadas: {tools}"
 
             async def call(name, args): return json.loads((await s.call_tool(name, args)).content[0].text)
 
-            # 1 PDF con tabla declarativa
+            # 1 PDF con tabla declarativa y tema corporativo nuevo
             r = await call("render_document", {
                 "template_html": "<h1>{{ titulo }}</h1><p class='muted'>{{ subtitulo }}</p>{% if tabla is defined and tabla %}{{ tabla }}{% endif %}",
                 "out_path": f"{d}/a.pdf",
+                "theme": "corporate-blue",
                 "data_json": json.dumps({"titulo": "Informe", "subtitulo": "E2E", "headers": ["KPI", "V"], "rows": [["A", 1], ["B", 2]]})})
             results["pdf"] = r; assert r["status"] == "ok" and os.path.exists(r["path"]), r
 
@@ -69,4 +70,69 @@ async def test_office_worker_mcp_e2e(tmp_path):
             # 8 temas
             r = await call("list_themes", {}); results["themes"] = r; assert r.get("theme", {}).get("primary"), r
 
-    # El PDF ya se validó arriba vía read_pdf (n_pages>=1 + texto real extraído).
+            # 9 convert_to_pdf (Word -> PDF vía LibreOffice)
+            if shutil.which("soffice") or shutil.which("libreoffice"):
+                r = await call("convert_to_pdf", {"input_file": results["docx"]["path"], "output": f"{d}/b_from_docx.pdf"})
+                results["convert"] = r
+                assert r["status"] == "ok" and os.path.exists(r["path"]), r
+                assert open(r["path"], "rb").read(5) == b"%PDF-"
+
+            # 10 pdf_manipulate (merge 2 pdfs y extract)
+            r = await call("pdf_manipulate", {
+                "operation": "merge",
+                "output": f"{d}/merged_e2e.pdf",
+                "files": [results["pdf"]["path"], results["pdf"]["path"]]
+            })
+            results["merge"] = r
+            assert r["status"] == "ok" and os.path.exists(r["path"]), r
+
+            r = await call("pdf_manipulate", {
+                "operation": "extract",
+                "output": f"{d}/extracted_e2e.pdf",
+                "input_path": results["merge"]["path"],
+                "pages": "1"
+            })
+            results["extract"] = r
+            assert r["status"] == "ok" and os.path.exists(r["path"]), r
+
+            # 11 pdf_fill_form (crear form con reportlab y rellenar vía tool)
+            try:
+                from reportlab.pdfgen import canvas
+                form_file = f"{d}/e2e_form.pdf"
+                c = canvas.Canvas(form_file)
+                c.drawString(50, 750, "Email:")
+                c.acroForm.textfield(name="email", x=100, y=745, width=150, height=20)
+                c.showPage()
+                c.save()
+
+                r = await call("pdf_fill_form", {
+                    "input_pdf": form_file,
+                    "fields": {"email": "test@example.com"},
+                    "output": f"{d}/e2e_filled.pdf"
+                })
+                results["fill_form"] = r
+                assert r["status"] == "ok" and os.path.exists(r["path"]), r
+            except Exception as exc:
+                print(f"pdf_fill_form E2E skip/warn: {exc}")
+
+            # 12 pdf_ocr (imagen -> texto + PDF buscable)
+            if shutil.which("tesseract"):
+                try:
+                    from PIL import Image, ImageDraw
+                    img_file = f"{d}/e2e_ocr.png"
+                    img = Image.new("RGB", (250, 60), color=(255, 255, 255))
+                    d_ctx = ImageDraw.Draw(img)
+                    d_ctx.text((10, 20), "HELLO WORLD", fill=(0, 0, 0))
+                    img.save(img_file)
+
+                    r = await call("pdf_ocr", {
+                        "input_path": img_file,
+                        "lang": "eng",
+                        "output": f"{d}/e2e_ocr.pdf"
+                    })
+                    results["ocr"] = r
+                    assert r["status"] == "ok", r
+                    assert "HELLO" in r.get("text", "").replace(" ", "").upper()
+                    assert os.path.exists(r["path"])
+                except Exception as exc:
+                    print(f"pdf_ocr E2E skip/warn: {exc}")

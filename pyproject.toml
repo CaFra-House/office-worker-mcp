@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "office-worker-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "The Office Worker — your agent's document clerk: Word, Excel, PowerPoint & PDF with real design (templates + themes + PDF input)."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -26,13 +26,22 @@ dependencies = [
     "PyMuPDF>=1.24",
     "pdfplumber>=0.11",
     "pypdf>=4",
+    "reportlab>=4.0",
 ]
 
 # PPTX editable requiere html-to-pptx + Playwright/Chromium (pesado, con navegador).
 # Se declara como extra opcional para no forzar Chromium a quien solo usa PDF/Word/Excel.
 [project.optional-dependencies]
 pptx = ["html-to-pptx>=0.3", "playwright>=1.40"]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "html-to-pptx>=0.3", "playwright>=1.40"]
+ocr = ["pillow>=10", "pytesseract>=0.3.10"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "html-to-pptx>=0.3",
+    "playwright>=1.40",
+    "pillow>=10",
+    "pytesseract>=0.3.10",
+]
 
 [project.scripts]
 # Cara CLI (opcional) para no-tecnicos/scripts; el MCP es la cara principal para agentes IA.

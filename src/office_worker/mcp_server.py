@@ -1,6 +1,6 @@
 """The Office Worker — MCP server (cara delgada sobre office_worker.core).
 
-Meta: pocas tools poderosas (~8 aquí), no 47 CRUD genéricas → bajo overhead de contexto.
+Meta: pocas tools poderosas (~12 aquí), no 47 CRUD genéricas → bajo overhead de contexto.
 Cada tool crea/lee un archivo real y devuelve {status, path, ...} o {status:"error", error}.
 Regla anti-loop en instructions: si una tool falla 2 veces, NO reintentar con variantes.
 """
@@ -17,6 +17,10 @@ from office_worker.core import (
     read_pdf as _read_pdf,
     extract_tables as _extract_tables,
     list_form_fields as _list_form_fields,
+    fill_pdf_form as _fill_pdf_form,
+    ocr_pdf as _ocr_pdf,
+    convert_office_to_pdf as _convert_office_to_pdf,
+    manipulate_pdf as _manipulate_pdf,
     load_theme, DEFAULT_THEME,
 )
 
@@ -24,9 +28,9 @@ mcp = FastMCP(
     "office-worker",
     instructions=(
         "The Office Worker: genera documentos de oficina profesionales (PDF/Word/Excel/PPTX) "
-        "desde datos + tema corporativo, y lee PDFs (texto/tablas/formularios). "
-        "Usa la tool que corresponda al formato pedido. Regla anti-loop: si una llamada falla 2 "
-        "veces, NO reintentes con variantes; reporta el error exacto y detente."
+        "desde datos + tema corporativo, lee y procesa PDFs (texto/tablas/formularios/OCR/manipulación), "
+        "y convierte documentos Office a PDF. Usa la tool que corresponda al formato pedido. "
+        "Regla anti-loop: si una llamada falla 2 veces, NO reintentes con variantes; reporta el error exacto y detente."
     ),
 )
 
@@ -34,8 +38,8 @@ mcp = FastMCP(
 def _ok(path): return {"status": "ok", "path": os.path.abspath(path), "bytes": os.path.getsize(path)}
 
 @mcp.tool()
-def render_document(template_html: str, out_path: str, data_json: str = "{}", theme: str | None = None) -> dict:
-    """Genera un PDF profesional desde plantilla HTML/Jinja + datos + tema."""
+def render_document(template_html: str, out_path: str, data_json: str = "{}", theme: str | None = None, logo: str | None = None) -> dict:
+    """Genera un PDF profesional desde plantilla HTML/Jinja + datos + tema (+ logo opcional en header)."""
     try: data = json.loads(data_json or "{}") or {}
     except json.JSONDecodeError as e: return {"status":"error","error":f"data_json inválido: {e}"}
     if isinstance(data.get("rows"), list):
@@ -43,7 +47,7 @@ def render_document(template_html: str, out_path: str, data_json: str = "{}", th
         thead="".join(f"<th>{h}</th>" for h in headers)
         body="\n".join("<tr>"+"".join(f"<td>{c}</td>" for c in r)+"</tr>" for r in data["rows"])
         data["tabla"]=f"<table><thead><tr>{thead}</tr></thead><tbody>{body}</tbody></table>"
-    try: return _ok(_render_pdf(template_html, out_path, data=data, theme=theme))
+    try: return _ok(_render_pdf(template_html, out_path, data=data, theme=theme, logo=logo))
     except Exception as e: return {"status":"error","error":str(e)}
 
 @mcp.tool()
@@ -93,6 +97,67 @@ def list_themes(theme_name_or_path: str | None = None) -> dict:
     """Devuelve el tema resuelto (paleta+fuente) para usarlo como referencia de diseño."""
     t = load_theme(theme_name_or_path) if theme_name_or_path else dict(DEFAULT_THEME)
     return {"status":"ok","theme":t}
+
+@mcp.tool()
+def pdf_fill_form(input_pdf: str, output: str, fields: dict[str, str] | str = {}) -> dict:
+    """Rellena campos de un formulario PDF interactivo (AcroForm)."""
+    try:
+        f = json.loads(fields) if isinstance(fields, str) else (fields or {})
+    except json.JSONDecodeError as e:
+        return {"status": "error", "error": f"fields inválido: {e}"}
+    try:
+        return _ok(_fill_pdf_form(input_pdf, f, output))
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+@mcp.tool()
+def pdf_ocr(input_path: str, lang: str = "spa", output: str | None = None) -> dict:
+    """Extrae texto de una imagen o PDF vía OCR (Tesseract). Si se indica output, guarda PDF con capa de texto."""
+    try:
+        text = _ocr_pdf(input_path, lang=lang, out=output)
+        if output:
+            res = _ok(output)
+            res["text"] = text
+            return res
+        return {"status": "ok", "text": text, "lang": lang}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+@mcp.tool()
+def convert_to_pdf(input_file: str, output: str) -> dict:
+    """Convierte documentos Office (.docx, .xlsx, .pptx) a PDF usando LibreOffice headless."""
+    try:
+        return _ok(_convert_office_to_pdf(input_file, output))
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+@mcp.tool()
+def pdf_manipulate(
+    operation: str,
+    output: str,
+    input_path: str | None = None,
+    files: list[str] | str | None = None,
+    pages: str | None = None,
+    angle: int = 90,
+) -> dict:
+    """Manipula PDFs: unir (merge), extraer páginas (extract) o rotar (rotate)."""
+    try:
+        file_list = files
+        if isinstance(files, str):
+            try:
+                file_list = json.loads(files)
+            except Exception:
+                file_list = [f.strip() for f in files.split(",") if f.strip()]
+        return _ok(_manipulate_pdf(
+            operation=operation,
+            out=output,
+            input_path=input_path,
+            files=file_list,
+            pages=pages,
+            angle=angle,
+        ))
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 def main(): mcp.run()
