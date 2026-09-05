@@ -29,6 +29,13 @@ def main(argv=None):
     ex = sub.add_parser("excel"); common(ex); ex.add_argument("--title", default="")
     ex.add_argument("--sheets-json", default="[]")
 
+    sk = sub.add_parser("skill", help="Gestión de skills empaquetadas para agentes")
+    sk_sub = sk.add_subparsers(dest="skill_cmd", required=True)
+    sk_inst = sk_sub.add_parser("install", help="Instala skill en ~/.hermes/skills/<slug>/")
+    sk_inst.add_argument("name", nargs="?", default="office-worker", help="Nombre de la skill ('office-worker', 'google-drive-gmail', o 'all')")
+    sk_inst.add_argument("--dest", default=None, help="Directorio destino opcional")
+    sk_sub.add_parser("list", help="Lista skills empaquetadas disponibles")
+
     a = p.parse_args(argv)
 
     from office_worker.core import render_pdf, create_word, create_excel
@@ -49,6 +56,24 @@ def main(argv=None):
     elif a.cmd == "excel":
         try: sheets=json.loads(a.sheets_json or "[]"); _print(create_excel(a.out,title=a.title,sheets=sheets or None,theme=a.theme)); return 0
         except Exception as e: print(json.dumps({"status":"error","error":str(e)})); return 1
+    elif a.cmd == "skill":
+        from office_worker.skills import install_skill, list_packaged_skills
+        if a.skill_cmd == "install":
+            try:
+                res = install_skill(a.name, dest_dir=a.dest)
+                _print(res)
+                return 0
+            except Exception as e:
+                print(json.dumps({"status": "error", "error": str(e)}))
+                return 1
+        elif a.skill_cmd == "list":
+            try:
+                res = {"status": "ok", "skills": list_packaged_skills()}
+                _print(res)
+                return 0
+            except Exception as e:
+                print(json.dumps({"status": "error", "error": str(e)}))
+                return 1
     return 0
 
 

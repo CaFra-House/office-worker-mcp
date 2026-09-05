@@ -24,7 +24,7 @@ async def test_office_worker_mcp_e2e(tmp_path):
         async with ClientSession(r, w) as s:
             await s.initialize()
             tools = [t.name for t in (await s.list_tools()).tools]
-            assert len(tools) == 20 and "render_document" in tools, f"tools inesperadas: {tools}"
+            assert len(tools) == 21 and "render_document" in tools and "pdf_preview" in tools and "pdf_redact" in tools and "pdf_extract_structured" in tools, f"tools inesperadas: {tools}"
 
             async def call(name, args): return json.loads((await s.call_tool(name, args)).content[0].text)
 
@@ -86,9 +86,18 @@ async def test_office_worker_mcp_e2e(tmp_path):
             results["read_pdf"] = r
             assert r.get("n_pages", 0) >= 1 and r.get("pages") and "tables_by_page" in r and "is_form" in r, r
 
-            # Herramientas deprecated aún funcionando
-            r = await call("pdf_extract_tables", {"path": results["pdf"]["path"]}); results["tables"] = r; assert r.get("status") == "ok", r
-            r = await call("pdf_list_form_fields", {"path": results["pdf"]["path"]}); results["forms"] = r; assert r.get("status") == "ok", r
+            # 7.b Preview PNG via PyMuPDF (data_url base64 + archivo en disco opcional)
+            import base64
+            r_prev = await call("pdf_preview", {"input_path": results["pdf"]["path"], "dpi": 110})
+            results["preview"] = r_prev
+            assert r_prev.get("status") == "ok" and r_prev.get("data_url", "").startswith("data:image/png;base64,"), r_prev
+            raw_png = base64.b64decode(r_prev["data_url"].split(",", 1)[1])
+            assert raw_png[:8] == b"\x89PNG\r\n\x1a\n", "Magic bytes PNG inválidos en pdf_preview E2E"
+
+            # 7.c Preview guardando en disco
+            r_prev_file = await call("pdf_preview", {"input_path": results["pdf"]["path"], "output": f"{d}/preview.png", "max_pages": 1})
+            assert r_prev_file.get("status") == "ok" and os.path.exists(f"{d}/preview.png")
+            assert open(f"{d}/preview.png", "rb").read(8) == b"\x89PNG\r\n\x1a\n"
 
             # 8 temas
             r = await call("list_themes", {}); results["themes"] = r; assert r.get("theme", {}).get("primary"), r
@@ -299,5 +308,108 @@ async def test_office_worker_mcp_e2e(tmp_path):
             assert r_batch["succeeded"] == 2
             assert r_batch["failed"] == 1
             assert os.path.exists(f"{d}/batch_doc.docx")
+
+            # 22 pdf_redact E2E
+            import fitz
+            doc_sec = fitz.open()
+            p_sec = doc_sec.new_page()
+            p_sec.insert_text((50, 100), "CONFIDENCIAL_E2E: Clave secreta 12345.")
+            p_sec.insert_text((50, 200), "COORD_SECRET_E2E en posición fija.")
+            sec_pdf = f"{d}/sec_e2e.pdf"
+            doc_sec.save(sec_pdf)
+            doc_sec.close()
+
+            r_redact = await call("pdf_redact", {
+                "input_path": sec_pdf,
+                "output": f"{d}/redacted_e2e.pdf",
+                "search_text": "CONFIDENCIAL_E2E",
+                "regions": [{"page": 1, "x0": 45, "y0": 185, "x1": 300, "y1": 215}],
+                "fill_color": "black"
+            })
+            assert r_redact["status"] == "ok" and os.path.exists(r_redact["path"])
+            assert r_redact["redactions_count"] >= 2
+            doc_check = fitz.open(r_redact["path"])
+            assert "CONFIDENCIAL_E2E" not in doc_check[0].get_text()
+            assert "COORD_SECRET_E2E" not in doc_check[0].get_text()
+            doc_check.close()
+
+            # 23 pdf_extract_structured E2E (JSON & Markdown)
+            r_ext_json = await call("pdf_extract_structured", {
+                "input_path": results["pdf"]["path"],
+                "format": "json",
+                "output": f"{d}/extracted_e2e.json"
+            })
+            assert r_ext_json["status"] == "ok" and r_ext_json["format"] == "json"
+            assert r_ext_json["n_pages"] >= 1 and len(r_ext_json["pages"]) >= 1
+            assert os.path.exists(f"{d}/extracted_e2e.json")
+
+            r_ext_md = await call("pdf_extract_structured", {
+                "input_path": results["pdf"]["path"],
+                "format": "markdown",
+                "output": f"{d}/extracted_e2e.md"
+            })
+            assert r_ext_md["status"] == "ok" and r_ext_md["format"] == "markdown"
+            assert "## Página" in r_ext_md["content"]
+            assert os.path.exists(f"{d}/extracted_e2e.md")
+
+            # 24 pdf_manipulate flatten E2E
+            if "fill_form" in results and os.path.exists(results["fill_form"]["path"]):
+                r_flat = await call("pdf_manipulate", {
+                    "operation": "flatten",
+                    "input_path": results["fill_form"]["path"],
+                    "output": f"{d}/flattened_e2e.pdf"
+                })
+                assert r_flat["status"] == "ok" and os.path.exists(r_flat["path"])
+                from pypdf import PdfReader
+                assert not PdfReader(r_flat["path"]).get_fields()
+
+            # 25 pdf_manipulate split_smart E2E
+            doc_concat = fitz.open()
+            p0 = doc_concat.new_page()
+            p0.insert_text((50, 100), "DOC A: Reporte")
+            doc_concat.new_page()  # Blank separator page
+            p2 = doc_concat.new_page()
+            p2.insert_text((50, 100), "DOC B: Contrato")
+            concat_path = f"{d}/concat_e2e.pdf"
+            doc_concat.save(concat_path)
+            doc_concat.close()
+
+            r_split = await call("pdf_manipulate", {
+                "operation": "split_smart",
+                "input_path": concat_path,
+                "output": f"{d}/split_smart_e2e.pdf"
+            })
+            assert r_split["status"] == "ok" and r_split["n_splits"] == 2
+            assert len(r_split["files"]) == 2
+            for f_part in r_split["files"]:
+                assert os.path.exists(f_part)
+                assert open(f_part, "rb").read(5) == b"%PDF-"
+
+            # 26 office_batch con nuevas tools v0.6.0
+            r_batch_v6 = await call("office_batch", {
+                "operations": [
+                    {
+                        "tool": "pdf_redact",
+                        "args": {
+                            "input_path": sec_pdf,
+                            "output": f"{d}/batch_redacted.pdf",
+                            "search_text": "Clave secreta"
+                        }
+                    },
+                    {
+                        "tool": "pdf_extract_structured",
+                        "args": {
+                            "input_path": results["pdf"]["path"],
+                            "format": "markdown",
+                            "output": f"{d}/batch_extracted.md"
+                        }
+                    }
+                ]
+            })
+            assert r_batch_v6["status"] == "ok"
+            assert r_batch_v6["total"] == 2
+            assert r_batch_v6["succeeded"] == 2
+            assert os.path.exists(f"{d}/batch_redacted.pdf")
+            assert os.path.exists(f"{d}/batch_extracted.md")
 
 

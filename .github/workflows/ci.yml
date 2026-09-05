@@ -12,16 +12,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.12"]
+        # Limitación honesta de plataforma:
+        # windows-latest se excluye intencionalmente de la matriz de CI porque WeasyPrint
+        # requiere dependencias nativas C (Pango, Cairo, GObject / GTK3 stack) que no tienen
+        # instalador desatendido oficial para runners de CI en Windows sin emulación MSYS2 compleja,
+        # y las rutas de LibreOffice headless difieren. En entornos Windows se recomienda ejecutar
+        # bajo WSL2 o en contenedor Linux. Documentado como limitación conocida en README.md.
         include:
-          - os: ubuntu-latest
-            python-version: "3.11"
-          - os: ubuntu-latest
-            python-version: "3.12"
           - os: ubuntu-24.04-arm
             python-version: "3.11"
             experimental: true
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental == true }}
+    env:
+      DYLD_FALLBACK_LIBRARY_PATH: /opt/homebrew/lib
     steps:
       - uses: actions/checkout@v4
 
@@ -29,11 +35,17 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # WeasyPrint necesita libs de sistema en Linux
-      - name: Install system deps (WeasyPrint)
+      # Dependencias del sistema por sistema operativo
+      - name: Install system deps (Ubuntu / Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0 libffi-dev shared-mime-info
+          sudo apt-get install -y libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0 libffi-dev shared-mime-info tesseract-ocr tesseract-ocr-spa libreoffice
+
+      - name: Install system deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install pango cairo gdk-pixbuf libffi tesseract || true
 
       - name: Install package + dev extras
         run: |
@@ -44,12 +56,17 @@ jobs:
       - name: Install Playwright + Chromium (for PPTX e2e)
         run: |
           python -m pip install playwright
-          python -m playwright install --with-deps chromium || echo "WARN: Chromium no disponible; e2e de pptx fallará"
+          python -m playwright install --with-deps chromium || echo "WARN: Chromium no disponible; e2e de pptx se salteará"
 
       - name: Run tests (core + MCP e2e)
         run: |
           pytest tests/test_core.py -q
           pytest tests/test_e2e_mcp.py -q
+
+      - name: Smoke verification (token count & CLI)
+        run: |
+          python count_tokens.py
+          owi --help || true
 
   build:
     name: Build sdist+wheel

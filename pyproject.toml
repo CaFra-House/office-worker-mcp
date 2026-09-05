@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "office-worker-mcp"
-version = "0.5.0"
+version = "0.6.0"
 description = "The Office Worker — your agent's document clerk: Word, Excel, PowerPoint & PDF with real design (templates + themes + PDF input)."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Julio Cardozo" }]
-keywords = ["mcp", "office", "pdf", "docx", "xlsx", "pptx", "documents", "agent", "templates", "signature", "compression", "batch", "edit", "charts"]
+keywords = ["mcp", "office", "pdf", "docx", "xlsx", "pptx", "documents", "agent", "templates", "signature", "compression", "batch", "edit", "charts", "preview", "vision", "redact", "rag", "security", "skills", "flatten"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -22,6 +22,8 @@ classifiers = [
     "Topic :: Communications",
     "Topic :: Text Processing :: Markup",
     "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
     "Operating System :: OS Independent",
 ]
 dependencies = [
@@ -69,5 +71,5 @@ office_worker = "office_worker.mcp_server:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"office_worker" = ["templates_data/*.docx"]
+"office_worker" = ["templates_data/*.docx", "skills/*.md"]
 

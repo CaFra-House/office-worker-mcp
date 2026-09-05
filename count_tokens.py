@@ -61,10 +61,56 @@ V040_BASELINE = {
 }
 V040_TOTAL = 1455.25
 
+V050_BASELINE = {
+    "render_document": 225.00,
+    "create_word": 180.00,
+    "create_excel": 141.25,
+    "create_pptx": 79.25,
+    "read_pdf": 138.00,
+    "pdf_extract_tables": 61.25,
+    "pdf_list_form_fields": 35.75,
+    "list_themes": 47.00,
+    "pdf_fill_form": 87.75,
+    "pdf_ocr": 103.00,
+    "convert_to_pdf": 53.50,
+    "pdf_manipulate": 179.50,
+    "list_templates": 18.00,
+    "pdf_compress": 70.25,
+    "sign_pdf": 121.25,
+    "edit_excel": 105.75,
+    "edit_word": 105.50,
+    "pdf_to_excel": 102.25,
+    "read_office": 51.00,
+    "office_batch": 58.25,
+}
+V050_TOTAL = 1963.50
+
+V051_BASELINE = {
+    "render_document": 200.25,
+    "create_word": 147.00,
+    "create_excel": 124.75,
+    "create_pptx": 71.00,
+    "read_pdf": 129.50,
+    "pdf_preview": 86.50,
+    "list_themes": 38.75,
+    "pdf_fill_form": 76.00,
+    "pdf_ocr": 86.25,
+    "convert_to_pdf": 53.50,
+    "pdf_manipulate": 137.50,
+    "list_templates": 18.00,
+    "pdf_compress": 70.25,
+    "sign_pdf": 121.25,
+    "edit_excel": 77.25,
+    "edit_word": 77.00,
+    "pdf_to_excel": 93.75,
+    "read_office": 51.00,
+    "office_batch": 38.00,
+}
+V051_TOTAL = 1697.50
+
 async def main():
     tools = await mcp.list_tools()
     total = 0
-    deprecated_tokens = 0
     current_tokens = {}
 
     print("=== Métrica REAL de tokens por tool (json.dumps(schema) / 4) ===")
@@ -73,27 +119,24 @@ async def main():
         s = json.dumps(schema)
         toks = len(s) / 4
         current_tokens[t.name] = toks
-        base_tok = V040_BASELINE.get(t.name)
+        base_tok = V051_BASELINE.get(t.name)
         if base_tok is not None:
             diff = toks - base_tok
-            diff_str = f"({diff:+.2f} vs v0.4.0)"
+            diff_str = f"({diff:+.2f} vs v0.5.1)"
         else:
-            diff_str = "(nueva tool v0.5.0)"
-        print(f"  {t.name:20s}: {toks:6.2f} tokens {diff_str}")
+            diff_str = "(nueva tool v0.6.0)"
+        print(f"  {t.name:24s}: {toks:6.2f} tokens {diff_str}")
         total += toks
-        if t.name in ("pdf_extract_tables", "pdf_list_form_fields"):
-            deprecated_tokens += toks
 
     print("-" * 65)
-    print(f"Total ({len(tools)} tools registradas v0.5.0) : {total:.2f} tokens")
-    print(f"Línea base (v0.4.0 auditada)        : {V040_TOTAL:.2f} tokens")
-    delta_v040 = total - V040_TOTAL
-    print(f"Delta real vs v0.4.0                : {delta_v040:+.2f} tokens")
-    print(f"Línea base (v0.3.0 auditada)        : {V030_TOTAL:.2f} tokens")
-    delta_v030 = total - V030_TOTAL
-    print(f"Delta real vs v0.3.0                : {delta_v030:+.2f} tokens")
-    consolidated_active = total - deprecated_tokens
-    print(f"Consolidado (18 tools activas)      : {consolidated_active:.2f} tokens")
+    print(f"Total ({len(tools)} tools registradas v0.6.0) : {total:.2f} tokens")
+    print(f"Línea base (v0.5.1 auditada)        : {V051_TOTAL:.2f} tokens")
+    delta_v051 = total - V051_TOTAL
+    print(f"Delta real vs v0.5.1                : {delta_v051:+.2f} tokens")
+    print(f"Línea base (v0.5.0 auditada)        : {V050_TOTAL:.2f} tokens")
+    delta_v050 = total - V050_TOTAL
+    print(f"Delta real vs v0.5.0                : {delta_v050:+.2f} tokens")
+    print(f"Objetivo <1900 tok v0.6.0           : {'CUMPLIDO (<1900)' if total < 1900 else 'NO CUMPLIDO'}")
 
 if __name__ == "__main__":
     asyncio.run(main())

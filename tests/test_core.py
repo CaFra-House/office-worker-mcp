@@ -8,16 +8,18 @@ from office_worker.core.templates import render_pdf
 from office_worker.core.word import create_word, edit_word
 from office_worker.core.excel import create_excel, edit_excel
 from office_worker.core.themes import load_theme, THEMES
-from office_worker.core.pdf import read_pdf, extract_tables, list_form_fields
+from office_worker.core.pdf import read_pdf, extract_tables, list_form_fields, pdf_preview, pdf_extract_structured
 from office_worker.core.security import safe_out, safe_url_fetcher
 from office_worker.core.pdf_tools import (
     fill_pdf_form,
     ocr_pdf,
     convert_office_to_pdf,
     manipulate_pdf,
+    pdf_redact,
 )
 from office_worker.core.pdf_to_excel import pdf_to_excel
 from office_worker.core.office_reader import read_office
+from office_worker.skills import resolve_packaged_skill, install_skill, list_packaged_skills
 
 TPL = """<h1>{{ titulo }}</h1><p class="muted">{{ subtitulo }} · {{ fecha }}</p>
 {% if tabla is defined and tabla %}{{ tabla }}{% endif %}"""
@@ -678,6 +680,228 @@ def test_create_excel_table_autofilter_charts(tmp_path):
     assert len(ws._charts) == 1
     assert len(ws.tables) == 1 or ws.auto_filter.ref is not None
     wb.close()
+
+
+def test_pdf_preview(tmp_path):
+    import base64
+
+    pdf_path = str(tmp_path / "sample_preview.pdf")
+    render_pdf(
+        "<h1>Documento de Prueba Preview</h1><p>Verificando renderizado PNG con PyMuPDF.</p>",
+        pdf_path,
+    )
+    assert os.path.exists(pdf_path)
+
+    # 1. Preview en memoria (data_url base64) con dpi configurable (default 110)
+    res = pdf_preview(pdf_path, dpi=110)
+    assert res["status"] == "ok"
+    assert res["n_pages"] >= 1
+    assert res["rendered_pages"] >= 1
+    assert len(res["pages"]) >= 1
+    assert res["data_url"].startswith("data:image/png;base64,")
+
+    # Decodificar y verificar magic bytes válidos de PNG
+    b64_str = res["data_url"].split(",", 1)[1]
+    png_bytes = base64.b64decode(b64_str)
+    assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n", "Magic bytes de PNG inválidos"
+
+    # 2. Preview guardando archivo en disco
+    out_png = str(tmp_path / "saved_preview.png")
+    res_disk = pdf_preview(pdf_path, output=out_png, max_pages=1, dpi=96)
+    assert res_disk["status"] == "ok"
+    assert os.path.exists(out_png)
+    assert os.path.getsize(out_png) > 0
+    with open(out_png, "rb") as f:
+        assert f.read(8) == b"\x89PNG\r\n\x1a\n"
+
+
+def test_pdf_redact_core(tmp_path):
+    import fitz
+    pdf_in = str(tmp_path / "sensitive.pdf")
+    pdf_out = str(tmp_path / "redacted.pdf")
+
+    # Crear PDF con texto confidencial y coordenadas específicas
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 100), "El código de seguridad es CLAVE_CONFIDENCIAL_998877 de acceso.")
+    page.insert_text((50, 200), "REG_TOP_SECRET en coordenadas 200.")
+    doc.save(pdf_in)
+    doc.close()
+
+    assert os.path.exists(pdf_in)
+
+    # Redactar por texto buscado Y por coordenadas simultáneamente
+    res = pdf_redact(
+        input_path=pdf_in,
+        output=pdf_out,
+        search_text="CLAVE_CONFIDENCIAL_998877",
+        regions=[{"page": 1, "x0": 45, "y0": 185, "x1": 300, "y1": 215}],
+        fill_color="black",
+    )
+    assert res["status"] == "ok"
+    assert os.path.exists(pdf_out)
+    assert res["redactions_count"] >= 2
+    assert open(pdf_out, "rb").read(5) == b"%PDF-"
+
+    # Verificación irreversible: el texto fue purgado del stream de fitz
+    doc_out = fitz.open(pdf_out)
+    extracted_text = doc_out[0].get_text()
+    assert "CLAVE_CONFIDENCIAL_998877" not in extracted_text, "Texto confidencial aún presente tras redacción"
+    assert "REG_TOP_SECRET" not in extracted_text, "Región de coordenadas aún presente tras redacción"
+    doc_out.close()
+
+
+def test_pdf_flatten_core(tmp_path):
+    try:
+        from reportlab.pdfgen import canvas
+        from pypdf import PdfReader
+        import fitz
+    except ImportError:
+        pytest.skip("reportlab, pypdf o fitz no disponible")
+
+    form_pdf = str(tmp_path / "form_to_flatten.pdf")
+    flat_pdf = str(tmp_path / "flattened.pdf")
+
+    c = canvas.Canvas(form_pdf)
+    c.drawString(50, 700, "Usuario Registrado:")
+    c.acroForm.textfield(name="usuario", value="Juan Perez", x=180, y=695, width=150, height=20)
+    c.showPage()
+    c.save()
+
+    r_before = PdfReader(form_pdf)
+    assert r_before.get_fields() is not None, "El PDF de prueba debe tener campos AcroForm"
+
+    # Aplanar formulario mediante manipulate_pdf con operation='flatten'
+    res_path = manipulate_pdf(operation="flatten", input_path=form_pdf, out=flat_pdf)
+    assert os.path.exists(res_path)
+    assert open(res_path, "rb").read(5) == b"%PDF-"
+
+    # Verificar que los campos interactivos ya no existen
+    r_after = PdfReader(flat_pdf)
+    assert not r_after.get_fields(), "Los campos de formulario no fueron aplanados (get_fields no está vacío)"
+
+    # Verificar que el contenido visual sigue legible en el texto estático
+    doc_flat = fitz.open(flat_pdf)
+    text_content = doc_flat[0].get_text()
+    assert "Juan Perez" in text_content or "Usuario Registrado" in text_content
+    doc_flat.close()
+
+
+def test_pdf_extract_structured_core(tmp_path):
+    # Generar un PDF con tabla declarativa vía render_pdf
+    pdf_in = str(tmp_path / "doc_with_table.pdf")
+    html = """<h1>Reporte Financiero</h1>
+    <table border="1">
+        <tr><th>Concepto</th><th>Monto</th></tr>
+        <tr><td>Suscripciones</td><td>50000</td></tr>
+        <tr><td>Servicios</td><td>20000</td></tr>
+    </table>"""
+    render_pdf(html, pdf_in)
+
+    assert os.path.exists(pdf_in)
+
+    # 1. Extracción a JSON
+    json_out = str(tmp_path / "extracted.json")
+    res_json = pdf_extract_structured(pdf_in, format="json", output=json_out)
+    assert res_json["status"] == "ok"
+    assert res_json["format"] == "json"
+    assert res_json["n_pages"] >= 1
+    assert len(res_json["pages"]) >= 1
+    assert res_json["n_tables"] >= 1
+    tbl = res_json["pages"][0]["tables"][0]
+    assert len(tbl) >= 2
+    assert "Concepto" in tbl[0] or "Monto" in tbl[0]
+    assert os.path.exists(json_out)
+
+    # 2. Extracción a Markdown legible con tablas pipe
+    md_out = str(tmp_path / "extracted.md")
+    res_md = pdf_extract_structured(pdf_in, format="markdown", output=md_out)
+    assert res_md["status"] == "ok"
+    assert res_md["format"] == "markdown"
+    assert "## Página 1" in res_md["content"]
+    assert "| Concepto | Monto |" in res_md["content"] or "Concepto" in res_md["content"]
+    assert "| --- | --- |" in res_md["content"]
+    assert os.path.exists(md_out)
+
+
+def test_pdf_split_smart_core(tmp_path):
+    import fitz
+    concat_pdf = str(tmp_path / "concatenated.pdf")
+    split_target = str(tmp_path / "split_doc.pdf")
+
+    # Crear PDF concatenado: Doc 1 (pág 0) + Página blanca separadora (pág 1) + Doc 2 (pág 2)
+    doc = fitz.open()
+    p0 = doc.new_page()
+    p0.insert_text((50, 100), "DOCUMENTO 1: Contrato de Prestacion de Servicios")
+    doc.new_page()  # Página en blanco (sin texto ni imágenes)
+    p2 = doc.new_page()
+    p2.insert_text((50, 100), "DOCUMENTO 2: Acta de Directorio Separada")
+    doc.save(concat_pdf)
+    doc.close()
+
+    assert os.path.exists(concat_pdf)
+
+    # Ejecutar split_smart
+    res = manipulate_pdf(operation="split_smart", input_path=concat_pdf, out=split_target)
+    assert res["status"] == "ok"
+    assert res["n_splits"] == 2
+    assert len(res["files"]) == 2
+
+    # Verificar que cada archivo es un PDF independiente válido
+    for f_path in res["files"]:
+        assert os.path.exists(f_path)
+        assert os.path.getsize(f_path) > 0
+        with open(f_path, "rb") as f:
+            assert f.read(5) == b"%PDF-", f"Archivo {f_path} no es PDF válido"
+
+    doc1 = fitz.open(res["files"][0])
+    assert "DOCUMENTO 1" in doc1[0].get_text()
+    assert "DOCUMENTO 2" not in doc1[0].get_text()
+    doc1.close()
+
+    doc2 = fitz.open(res["files"][1])
+    assert "DOCUMENTO 2" in doc2[0].get_text()
+    assert "DOCUMENTO 1" not in doc2[0].get_text()
+    doc2.close()
+
+
+def test_skills_packaging_and_cli(tmp_path):
+    # 1. Resolver skill empaquetada oficial
+    path_skill = resolve_packaged_skill("office-worker")
+    assert path_skill.exists()
+    assert "The Office Worker" in path_skill.read_text(encoding="utf-8")
+
+    # 2. Catálogo de skills
+    catalog = list_packaged_skills()
+    assert len(catalog) >= 2
+    names = [s["name"] for s in catalog]
+    assert "office-worker" in names and "google-drive-gmail" in names
+
+    # 3. Instalación idempotente en directorio temporal
+    dest = tmp_path / "hermes_skills"
+    res = install_skill("office-worker", dest_dir=dest)
+    assert res["status"] == "ok"
+    installed_file = dest / "office-worker" / "SKILL.md"
+    assert installed_file.exists()
+    assert installed_file.stat().st_size > 500
+
+    # 4. CLI con HOME fake sin tocar entornos reales
+    from pathlib import Path
+    from office_worker.cli import main as cli_main
+    fake_home = str(tmp_path / "fake_user_home")
+    old_home = os.environ.get("HOME")
+    try:
+        os.environ["HOME"] = fake_home
+        ret = cli_main(["skill", "install", "office-worker"])
+        assert ret == 0
+        cli_installed = Path(fake_home) / ".hermes" / "skills" / "office-worker" / "SKILL.md"
+        assert cli_installed.exists()
+    finally:
+        if old_home is not None:
+            os.environ["HOME"] = old_home
+        else:
+            os.environ.pop("HOME", None)
+
 
 
 

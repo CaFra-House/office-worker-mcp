@@ -307,8 +307,134 @@ def manipulate_pdf(
         with open(out_path, "wb") as f_out:
             writer.write(f_out)
 
+    elif op == "flatten":
+        import fitz
+        if not inp:
+            raise ValueError("La operación 'flatten' requiere 'input_path'")
+        inp = os.path.abspath(os.path.expanduser(str(inp)))
+        if not os.path.exists(inp):
+            raise FileNotFoundError(f"Archivo de entrada no encontrado: {inp}")
+
+        doc = fitz.open(inp)
+        doc.bake(annots=True, widgets=True)
+        if pwd:
+            doc.save(out_path, encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=pwd, garbage=4, deflate=True)
+        else:
+            doc.save(out_path, garbage=4, deflate=True)
+        doc.close()
+
+    elif op in ("split_smart", "split_by"):
+        import fitz
+        if not inp:
+            raise ValueError(f"La operación '{op}' requiere 'input_path'")
+        inp = os.path.abspath(os.path.expanduser(str(inp)))
+        if not os.path.exists(inp):
+            raise FileNotFoundError(f"Archivo de entrada no encontrado: {inp}")
+
+        # Si split_by tiene pages especificado, actúa como extract por rango
+        if op == "split_by" and pgs:
+            reader = PdfReader(inp)
+            indices = _parse_page_range(pgs, len(reader.pages))
+            writer = PdfWriter()
+            for idx in indices:
+                writer.add_page(reader.pages[idx])
+            if pwd:
+                writer.encrypt(user_password=pwd)
+            with open(out_path, "wb") as f_out:
+                writer.write(f_out)
+            return out_path
+
+        # split_smart: detección heurística de límites entre documentos
+        doc = fitz.open(inp)
+        total_p = len(doc)
+        warnings = []
+
+        if total_p <= 1:
+            warnings.append("El documento tiene 1 sola página; no se detectaron divisiones.")
+            groups = [[0]] if total_p == 1 else []
+        else:
+            # Heurística 1: Separador por página en blanco (sin texto y sin imágenes)
+            blank_pages = set()
+            for p_idx in range(total_p):
+                p = doc[p_idx]
+                txt = p.get_text().strip()
+                imgs = p.get_images()
+                if len(txt) == 0 and len(imgs) == 0:
+                    blank_pages.add(p_idx)
+
+            if blank_pages:
+                groups = []
+                curr = []
+                for p_idx in range(total_p):
+                    if p_idx in blank_pages:
+                        if curr:
+                            groups.append(curr)
+                            curr = []
+                    else:
+                        curr.append(p_idx)
+                if curr:
+                    groups.append(curr)
+            else:
+                # Heurística 2: Encabezado/título idéntico que se repite en páginas intermedias
+                headers = []
+                for p_idx in range(total_p):
+                    first_line = doc[p_idx].get_text().strip().split("\n")[0].strip()
+                    headers.append(first_line)
+
+                split_points = [0]
+                first_header = headers[0] if headers and len(headers[0]) >= 8 else None
+                if first_header:
+                    for p_idx in range(1, total_p):
+                        if headers[p_idx] == first_header:
+                            split_points.append(p_idx)
+
+                if len(split_points) > 1:
+                    groups = []
+                    for s_idx in range(len(split_points)):
+                        start = split_points[s_idx]
+                        end = split_points[s_idx + 1] if s_idx + 1 < len(split_points) else total_p
+                        groups.append(list(range(start, end)))
+                else:
+                    # Sin límite seguro detectado: advertencias honestas sin inventar falsos splits
+                    warnings.append(
+                        "No se detectó un límite claro (página en blanco separadora ni encabezado repetido); "
+                        "se conserva el documento íntegro en una sola partición para evitar divisiones arbitrarias."
+                    )
+                    groups = [list(range(total_p))]
+
+        stem, ext = os.path.splitext(out_path)
+        ext = ext or ".pdf"
+
+        generated_files = []
+        for g_idx, grp in enumerate(groups, 1):
+            target_part = f"{stem}_{g_idx}{ext}" if len(groups) > 1 else out_path
+            sub_doc = fitz.open()
+            for p_num in grp:
+                sub_doc.insert_pdf(doc, from_page=p_num, to_page=p_num)
+            if pwd:
+                sub_doc.save(target_part, encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=pwd, garbage=4, deflate=True)
+            else:
+                sub_doc.save(target_part, garbage=4, deflate=True)
+            sub_doc.close()
+            generated_files.append(os.path.abspath(target_part))
+
+        doc.close()
+
+        first_file = generated_files[0] if generated_files else out_path
+        total_bytes = sum(os.path.getsize(f) for f in generated_files if os.path.exists(f))
+
+        return {
+            "status": "ok",
+            "operation": op,
+            "files": generated_files,
+            "n_splits": len(generated_files),
+            "path": first_file,
+            "bytes": total_bytes,
+            "warnings": warnings,
+        }
+
     else:
-        raise ValueError(f"Operación no soportada: '{op}'. Operaciones válidas: 'merge', 'extract', 'rotate'")
+        raise ValueError(f"Operación no soportada: '{op}'. Operaciones válidas: 'merge', 'extract', 'rotate', 'flatten', 'split_smart', 'split_by'")
 
     if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
         raise RuntimeError(f"Error al escribir el PDF manipulado en: {out_path}")
@@ -507,5 +633,147 @@ def compress_pdf(input_path: str, output: str, quality: str = "med") -> dict:
         "size_after": size_after,
         "saved_bytes": saved_bytes,
         "savings_percent": savings_pct,
+    }
+
+
+def _parse_fill_color(fill_color: str | Sequence[float] | None = None) -> tuple[float, float, float]:
+    """Convierte colores en nombre, hex (#RRGGBB) o tupla/lista RGB a tupla de floats (0.0 a 1.0)."""
+    if not fill_color:
+        return (0.0, 0.0, 0.0)
+    if isinstance(fill_color, str):
+        fc = fill_color.strip().lower()
+        if fc in ("black", "negro", ""):
+            return (0.0, 0.0, 0.0)
+        if fc in ("white", "blanco"):
+            return (1.0, 1.0, 1.0)
+        if fc in ("red", "rojo"):
+            return (1.0, 0.0, 0.0)
+        if fc in ("gray", "grey", "gris"):
+            return (0.5, 0.5, 0.5)
+        if fc.startswith("#"):
+            hex_val = fc.lstrip("#")
+            if len(hex_val) == 6:
+                try:
+                    return (
+                        int(hex_val[0:2], 16) / 255.0,
+                        int(hex_val[2:4], 16) / 255.0,
+                        int(hex_val[4:6], 16) / 255.0,
+                    )
+                except ValueError:
+                    pass
+        import json
+        try:
+            val = json.loads(fc)
+            if isinstance(val, (list, tuple)) and len(val) >= 3:
+                c = [float(x) for x in val[:3]]
+                if any(x > 1.0 for x in c):
+                    c = [x / 255.0 for x in c]
+                return (c[0], c[1], c[2])
+        except Exception:
+            pass
+        return (0.0, 0.0, 0.0)
+    if isinstance(fill_color, (list, tuple)) and len(fill_color) >= 3:
+        c = [float(x) for x in fill_color[:3]]
+        if any(x > 1.0 for x in c):
+            c = [x / 255.0 for x in c]
+        return (c[0], c[1], c[2])
+    return (0.0, 0.0, 0.0)
+
+
+def pdf_redact(
+    input_path: str = "",
+    output: str = "",
+    search_text: str = "",
+    regions: list[dict] | None = None,
+    fill_color: str | Sequence[float] | None = None,
+    **kwargs,
+) -> dict:
+    """Borra y censura información sensible de forma permanente e irreversible en un PDF vía PyMuPDF.
+
+    - input_path: ruta al archivo PDF original.
+    - output: ruta de destino para el PDF redactado.
+    - search_text: texto confidencial a buscar y eliminar en todas las páginas.
+    - regions: lista de rectángulos a censurar [{'page': 1, 'x0': 100, 'y0': 200, 'x1': 300, 'y1': 250}].
+    - fill_color: color de la barra de censura (default negro).
+
+    Devuelve dict con status, path, bytes y redactions_count.
+    """
+    import fitz  # PyMuPDF
+    import json
+
+    inp = input_path or kwargs.get("input") or kwargs.get("input_pdf") or kwargs.get("file_in")
+    out = output or kwargs.get("output_path") or kwargs.get("out")
+
+    if not inp:
+        raise ValueError("Se requiere 'input_path' para redactar el PDF.")
+    if not out:
+        raise ValueError("Se requiere 'output' para guardar el PDF redactado.")
+
+    inp = os.path.abspath(os.path.expanduser(str(inp)))
+    if not os.path.exists(inp):
+        raise FileNotFoundError(f"Archivo PDF no encontrado: {inp}")
+
+    out_path = safe_out(out)
+
+    reg_list = regions
+    if isinstance(regions, str):
+        try:
+            reg_list = json.loads(regions or "[]")
+        except Exception:
+            reg_list = []
+    elif reg_list is None:
+        reg_list = []
+
+    txt_search = str(search_text or "").strip()
+    if not txt_search and not reg_list:
+        raise ValueError("Debe especificar 'search_text' o 'regions' para aplicar redacciones.")
+
+    fill_rgb = _parse_fill_color(fill_color)
+
+    doc = fitz.open(inp)
+    total_redactions = 0
+
+    for page_idx in range(len(doc)):
+        page = doc[page_idx]
+        page_redactions = 0
+
+        # Redacción por búsqueda de texto
+        if txt_search:
+            hits = page.search_for(txt_search)
+            for hit in hits:
+                page.add_redact_annot(hit, fill=fill_rgb)
+                page_redactions += 1
+
+        # Redacción por coordenadas (page es 1-indexed en regions)
+        for reg in reg_list:
+            r_page = int(reg.get("page", 1))
+            if r_page == (page_idx + 1):
+                try:
+                    rect = fitz.Rect(
+                        float(reg["x0"]),
+                        float(reg["y0"]),
+                        float(reg["x1"]),
+                        float(reg["y1"]),
+                    )
+                    page.add_redact_annot(rect, fill=fill_rgb)
+                    page_redactions += 1
+                except (KeyError, ValueError, TypeError) as exc:
+                    raise ValueError(f"Región inválida en página {r_page}: {reg} ({exc})")
+
+        if page_redactions > 0:
+            page.apply_redactions()
+            total_redactions += page_redactions
+
+    doc.save(out_path, garbage=4, deflate=True)
+    doc.close()
+
+    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        raise RuntimeError(f"Error al escribir el PDF redactado en: {out_path}")
+
+    return {
+        "status": "ok",
+        "path": out_path,
+        "bytes": os.path.getsize(out_path),
+        "redactions_count": total_redactions,
     }
 
