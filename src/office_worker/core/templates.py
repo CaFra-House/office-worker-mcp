@@ -67,7 +67,14 @@ def render_pdf(
     Limitación residual: WeasyPrint puede leer archivos locales permitidos legibles por el proceso si no se define OFFICE_WORKER_ALLOWED_DIR.
     """
     import pathlib
-    from weasyprint import HTML
+
+    try:
+        from weasyprint import HTML
+    except ImportError as e:
+        raise RuntimeError(
+            "weasyprint no está instalado. Instalalo con: pip install \"office-worker-mcp[pdf]\" "
+            "(en Linux/macOS además las libs nativas Pango/Cairo; en Windows usá la imagen Docker oficial o WSL2)"
+        ) from e
 
     th = load_theme(theme)
 

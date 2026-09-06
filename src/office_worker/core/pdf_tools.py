@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from .doctor import find_libreoffice_binary
 from .security import safe_out
 
 
@@ -144,7 +145,7 @@ def convert_office_to_pdf(file_in: str, out: str) -> str:
     if not os.path.exists(file_in):
         raise FileNotFoundError(f"Archivo de entrada no encontrado: {file_in}")
 
-    soffice_bin = shutil.which("soffice") or shutil.which("libreoffice")
+    soffice_bin = find_libreoffice_binary()
     if not soffice_bin:
         raise FileNotFoundError("LibreOffice (soffice) no está instalado o disponible en PATH.")
 

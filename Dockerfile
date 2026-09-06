@@ -41,13 +41,14 @@ RUN useradd -m -u 10001 -s /bin/bash appuser \
     && chown -R appuser:appuser /data
 
 # Install office-worker-mcp with full feature set extras:
+# [pdf] for WeasyPrint premium HTML->PDF rendering
 # [sign] for cryptographic PDF signature & verification
 # [book] for EPUB multi-chapter export
 # [ocr] for pytesseract + Pillow scanned PDF & image text extraction
 # [pptx] for html-to-pptx (native PPTX charts fall back gracefully without Chromium)
 WORKDIR /app
 COPY . /app
-RUN pip install --no-cache-dir ".[sign,book,ocr,pptx]"
+RUN pip install --no-cache-dir ".[sign,book,ocr,pptx,pdf]"
 
 # Set working directory to default persistent output volume
 WORKDIR /data

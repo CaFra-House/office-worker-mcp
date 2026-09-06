@@ -43,7 +43,7 @@ def test_probe_import_error_falls_back_to_pip_hint(monkeypatch):
     env = doctor.check_environment()
     cap = env["capabilities"]["render_document"]
     assert cap["active"] is False
-    assert "pip install weasyprint" in cap["install_hint"]
+    assert "office-worker-mcp[pdf]" in cap["install_hint"]
 
 
 def test_all_ready_false_when_weasy_broken(monkeypatch):

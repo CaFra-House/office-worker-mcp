@@ -42,7 +42,7 @@ def main(argv=None):
 
     sk = sub.add_parser("skill", help="Gestión de skills empaquetadas para agentes")
     sk_sub = sk.add_subparsers(dest="skill_cmd", required=True)
-    sk_inst = sk_sub.add_parser("install", help="Instala skill en ~/.hermes/skills/<slug>/")
+    sk_inst = sk_sub.add_parser("install", help="Instala skill en el directorio de skills de Hermes (auto-resuelto por plataforma)")
     sk_inst.add_argument("name", nargs="?", default="office-worker", help="Nombre de la skill ('office-worker', 'google-drive-gmail', o 'all')")
     sk_inst.add_argument("--dest", default=None, help="Directorio destino opcional")
     sk_sub.add_parser("list", help="Lista skills empaquetadas disponibles")

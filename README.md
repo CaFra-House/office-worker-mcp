@@ -13,9 +13,9 @@
 
 | Platform | Path to all 30 tools |
 |----------|----------------------|
-| **Any OS with Docker** (incl. Windows, no WSL2) | Official image — recommended: see [Full setup](#full-setup--all-30-tools-zero-friction-recommended) below or [docs/docker.md](docs/docker.md) |
-| **Linux / macOS (bare metal)** | `pip install office-worker-mcp` + system binaries for the 3 capabilities pip can't ship (LibreOffice → Office→PDF, Tesseract → OCR, Pango/Cairo → WeasyPrint). Run `owi doctor` once: it prints the exact one-line install command for your OS. The server also warns you at startup if anything is missing. |
-| **Windows (bare metal)** | Not supported directly (WeasyPrint needs native C libs with no unattended installer). Use the Docker image or WSL2. Details: [docs/extras.md](docs/extras.md) |
+| **Any OS with Docker** (on Windows via Docker Desktop with WSL2/Hyper-V backend) | Official image — recommended: see [Full setup](#full-setup--all-30-tools-zero-friction-recommended) below or [docs/docker.md](docs/docker.md) |
+| **Linux / macOS (bare metal)** | `pip install "office-worker-mcp[pdf]"` + system binaries for the 3 capabilities pip can't ship (LibreOffice → Office→PDF, Tesseract → OCR, Pango/Cairo → WeasyPrint; `convert_to_pdf` uses LibreOffice and does not need weasyprint). Run `owi doctor` once: it prints the exact one-line install command for your OS. The server also warns you at startup if anything is missing. |
+| **Windows (bare metal)** | **Partial support only.** Word/Excel/PPTX, PDF read/extract, security and `convert_to_pdf` work natively; premium PDF rendering (WeasyPrint), OCR and books do NOT — they need native C libs with no unattended Windows installer. Docker image needs WSL2/Hyper-V or Docker Desktop; on LTSC without Hyper-V there is no full-setup path. Details: [docs/extras.md](docs/extras.md) |
 
 ```bash
 pip install office-worker-mcp          # core: MCP server + CLI 'owi'
@@ -29,7 +29,7 @@ Connect it to your agent (stdio):
 
 ## Full setup — all 30 tools, zero friction (recommended)
 
-The core pip package covers the full document lifecycle; three capabilities need system binaries that `pip` cannot ship (LibreOffice for Office→PDF conversion, Tesseract for OCR, Pango/Cairo native libs for WeasyPrint). The official Docker image bundles **everything** and runs on any OS with Docker — including Windows, no WSL2 needed:
+The core pip package covers the full document lifecycle; three capabilities need system binaries that `pip` cannot ship (LibreOffice for Office→PDF conversion, Tesseract for OCR, Pango/Cairo native libs for WeasyPrint). The official Docker image bundles **everything** and runs on any OS with Docker — on Windows it runs via Docker Desktop (WSL2/Hyper-V backend):
 
 ```bash
 docker pull ghcr.io/cafra-house/office-worker-mcp:latest
@@ -84,7 +84,7 @@ One package covers the entire document lifecycle — create → read → extract
 | Full reference of all 30 tools (returns / use when / do-not-use) | [docs/tools.md](docs/tools.md) |
 | Competitive comparison & why we're the one to install | [docs/comparison.md](docs/comparison.md) |
 | Ten end-to-end conversational workflows (EN) | [docs/workflows.md](docs/workflows.md) |
-| Optional extras ([ocr] [sign] [book] [pptx]) & honest platform limits | [docs/extras.md](docs/extras.md) |
+| Optional extras ([pdf] [ocr] [sign] [book] [pptx]) & honest platform limits | [docs/extras.md](docs/extras.md) |
 
 ## Develop & test
 

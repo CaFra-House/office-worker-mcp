@@ -1,6 +1,6 @@
 # Docker Deployment Guide — `office-worker-mcp`
 
-The official Docker image packages all 30 document processing tools into a self-contained container with zero host dependencies. It is the recommended deployment method for Windows (no WSL2 required), macOS, and Linux.
+The official Docker image packages all 30 document processing tools into a self-contained container with zero host dependencies. It is the recommended deployment method for Windows (via Docker Desktop with its WSL2 or Hyper-V backend), macOS, and Linux.
 
 - **Image:** `ghcr.io/cafra-house/office-worker-mcp:latest`
 - **Architectures:** `linux/amd64`, `linux/arm64` (multi-arch native)

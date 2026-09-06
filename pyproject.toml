@@ -24,7 +24,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
-    "Operating System :: OS Independent",
 ]
 dependencies = [
     "mcp[cli]>=1.27,<2",
@@ -32,7 +31,6 @@ dependencies = [
     "docxtpl>=0.20",
     "openpyxl>=3.1",
     "python-pptx>=1.0",
-    "weasyprint>=60",
     "jinja2>=3.1",
     "PyMuPDF>=1.24",
     "pdfplumber>=0.11",
@@ -47,6 +45,7 @@ dependencies = [
 # PPTX editable requiere html-to-pptx + Playwright/Chromium (pesado, con navegador).
 # Se declara como extra opcional para no forzar Chromium a quien solo usa PDF/Word/Excel.
 [project.optional-dependencies]
+pdf = ["weasyprint>=60"]
 pptx = ["html-to-pptx>=0.3", "playwright>=1.40"]
 ocr = ["pillow>=10", "pytesseract>=0.3.10"]
 sign = ["pyhanko>=0.25.0", "cryptography>=42.0.0"]

@@ -1,10 +1,11 @@
 """Packaged skills for The Office Worker.
 
 Provides discovery and installation functions to copy official agent skills into
-~/.hermes/skills/<slug>/SKILL.md idempotently.
+the Hermes skills directory (auto-resolved by platform) idempotently.
 """
 from __future__ import annotations
 import os
+import platform
 import shutil
 from pathlib import Path
 
@@ -76,15 +77,23 @@ def resolve_packaged_skill(name: str = "office-worker") -> Path:
     return file_path
 
 
+def _default_hermes_skills_dir() -> Path:
+    """Resuelve la ruta raíz por defecto para skills de Hermes según la plataforma."""
+    if platform.system().lower() == "windows":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        return Path(base) / "hermes" / "skills"
+    return Path.home() / ".hermes" / "skills"
+
+
 def install_skill(name: str = "office-worker", dest_dir: str | Path | None = None) -> dict:
-    """Copia la skill empaquetada a ~/.hermes/skills/<slug>/SKILL.md de forma idempotente.
+    """Copia la skill empaquetada al directorio de skills de Hermes de forma idempotente.
 
     - name: 'office-worker', 'google-drive-gmail', o 'all'.
-    - dest_dir: directorio raíz de destino (por defecto ~/.hermes/skills).
+    - dest_dir: directorio raíz de destino (por defecto auto-resuelto por plataforma).
 
     Devuelve dict con status y ruta(s) de instalación.
     """
-    base_target = Path(dest_dir) if dest_dir else Path(os.path.expanduser("~/.hermes/skills"))
+    base_target = Path(dest_dir) if dest_dir else _default_hermes_skills_dir()
 
     if name.lower().strip() == "all":
         installed = []

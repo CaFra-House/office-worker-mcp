@@ -6,12 +6,14 @@ The core package works with zero optional dependencies. Install extras only when
 
 ```bash
 pip install office-worker-mcp            # core: MCP server + CLI 'owi' (no extras)
+pip install "office-worker-mcp[pdf]"     # render_document premium HTML→PDF via WeasyPrint
 pip install "office-worker-mcp[ocr]"     # OCR over scans/images via Tesseract + Pillow
 pip install "office-worker-mcp[sign]"    # real PAdES cryptographic signing via pyhanko
 pip install "office-worker-mcp[book]"   # EPUB export for create_book via ebooklib
 pip install "office-worker-mcp[pptx]"   # native PowerPoint charts via Playwright/Chromium
 ```
 
+- `[pdf]` enables `render_document` premium HTML→PDF via WeasyPrint (requires native Pango/Cairo libraries on bare metal; install them with your system package manager on Linux/macOS, or use Docker / WSL2 on Windows).
 - `[ocr]` enables `pdf_ocr` (searchable text layer over scanned PDFs and images).
 - `[sign]` enables real PAdES signatures in `sign_pdf` and multi-engine verification in `verify_pdf_signature`.
 - `[book]` enables parallel `.epub` output from `create_book`.

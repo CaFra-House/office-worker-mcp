@@ -1,8 +1,10 @@
 """Environment doctor: audits host system binaries and Python libraries for office-worker capabilities."""
 from __future__ import annotations
+import glob
 import importlib.util
 import os
 import platform
+import re
 import shutil
 from typing import Any
 
@@ -40,6 +42,63 @@ def _check_binary(name: str) -> bool:
     return shutil.which(name) is not None
 
 
+def find_libreoffice_binary() -> str | None:
+    """Busca el ejecutable de LibreOffice (soffice) en PATH y rutas estándar por plataforma.
+
+    Prueba en orden:
+    1) shutil.which("soffice")
+    2) shutil.which("libreoffice")
+    3) Rutas estándar por plataforma (Windows, macOS, Linux).
+
+    Returns:
+        str | None: Ruta absoluta al binario o None si no se encuentra.
+    """
+    for name in ("soffice", "libreoffice"):
+        found = shutil.which(name)
+        if found:
+            return os.path.abspath(found)
+
+    sys_name = platform.system().lower()
+    candidates: list[str] = []
+
+    if sys_name == "windows":
+        candidates = [
+            r"C:\Program Files\LibreOffice\program\soffice.exe",
+            r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        ]
+        pf = os.environ.get("ProgramFiles")
+        if pf:
+            cand = os.path.join(pf, "LibreOffice", "program", "soffice.exe")
+            if cand not in candidates:
+                candidates.insert(0, cand)
+        pfx86 = os.environ.get("ProgramFiles(x86)")
+        if pfx86:
+            cand = os.path.join(pfx86, "LibreOffice", "program", "soffice.exe")
+            if cand not in candidates:
+                candidates.append(cand)
+    elif sys_name == "darwin":
+        candidates = ["/Applications/LibreOffice.app/Contents/MacOS/soffice"]
+    else:
+        posix = ["/usr/bin/soffice", "/usr/local/bin/soffice"]
+        if sys_name == "linux":
+            posix.append("/snap/bin/libreoffice")
+            opt_cands = glob.glob("/opt/libreoffice*/program/soffice")
+            posix.extend(
+                sorted(
+                    opt_cands,
+                    key=lambda p: [int(n) for n in re.findall(r"\d+", p)] or [0],
+                    reverse=True,
+                )
+            )
+        candidates = posix
+
+    for cand in candidates:
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return os.path.abspath(cand)
+
+    return None
+
+
 def _check_python_module(module_name: str) -> bool:
     """Checks if a Python module is importable without heavy execution."""
     try:
@@ -65,11 +124,15 @@ def _weasyprint_render_probe() -> tuple[bool, str]:
         return _WEASYPROBE_CACHE["result"]
     works, detail = False, ""
     try:
+        import contextlib
         import io
+        import sys
 
-        from weasyprint import HTML
+        err_stream = sys.stderr if sys.stderr is not None else io.StringIO()
+        with contextlib.redirect_stdout(err_stream):
+            from weasyprint import HTML
 
-        HTML(string="<p>probe</p>").write_pdf(io.BytesIO())
+            HTML(string="<p>probe</p>").write_pdf(io.BytesIO())
         works, detail = True, ""
     except ImportError as e:
         works, detail = False, f"import error: {e}"
@@ -129,12 +192,12 @@ def get_install_hint(cap_key: str, pkg_mgr: str) -> str:
             "winget": "winget install osdn.poppler",
         },
         "render_document": {
-            "apt": "pip install weasyprint",
-            "dnf": "pip install weasyprint",
-            "pacman": "pip install weasyprint",
-            "apk": "pip install weasyprint",
-            "brew": "brew install pango && pip install weasyprint",
-            "winget": "pip install weasyprint",
+            "apt": 'pip install "office-worker-mcp[pdf]"',
+            "dnf": 'pip install "office-worker-mcp[pdf]"',
+            "pacman": 'pip install "office-worker-mcp[pdf]"',
+            "apk": 'pip install "office-worker-mcp[pdf]"',
+            "brew": 'brew install pango cairo gdk-pixbuf && pip install "office-worker-mcp[pdf]"',
+            "winget": 'pip install "office-worker-mcp[pdf]"',
         },
         "pandas": {
             "apt": "pip install pandas",
@@ -174,7 +237,7 @@ def check_environment() -> dict[str, Any]:
     os_name, pkg_mgr = detect_os()
 
     # System binaries
-    has_soffice = _check_binary("soffice") or _check_binary("libreoffice")
+    has_soffice = find_libreoffice_binary() is not None
     has_tesseract = _check_binary("tesseract")
     has_poppler = _check_binary("pdftoppm")
 

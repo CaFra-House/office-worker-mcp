@@ -12,7 +12,7 @@ from .templates_pack import list_packaged_templates, resolve_template_path, get_
 from .diff import document_diff
 from .compliance import scrub_metadata, protect_office, verify_pdf_signature
 from .book import create_book
-from .doctor import check_environment, detect_os, get_install_hint
+from .doctor import check_environment, detect_os, get_install_hint, find_libreoffice_binary
 
 __all__ = [
     "safe_out", "safe_url_fetcher", "PROTECTED_SYSTEM_DIRS",
@@ -23,6 +23,6 @@ __all__ = [
     "sign_pdf", "compress_pdf", "pdf_redact", "pdf_to_excel", "read_office",
     "list_packaged_templates", "resolve_template_path", "get_template_schema", "TEMPLATES_CATALOG",
     "document_diff", "scrub_metadata", "protect_office", "verify_pdf_signature",
-    "create_book", "check_environment", "detect_os", "get_install_hint",
+    "create_book", "check_environment", "detect_os", "get_install_hint", "find_libreoffice_binary",
 ]
 

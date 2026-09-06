@@ -240,7 +240,13 @@ def create_book(
 
     Returns dict with status, path, bytes, chapters_count, and epub_path (if generated).
     """
-    from weasyprint import HTML
+    try:
+        from weasyprint import HTML
+    except ImportError as e:
+        raise RuntimeError(
+            "weasyprint no está instalado. Instalalo con: pip install \"office-worker-mcp[pdf]\" "
+            "(en Linux/macOS además las libs nativas Pango/Cairo; en Windows usá la imagen Docker oficial o WSL2)"
+        ) from e
 
     if not title:
         raise ValueError("El título del libro es obligatorio (title no puede estar vacío).")
