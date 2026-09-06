@@ -96,7 +96,8 @@ def _render_document_install_hint(pkg_mgr: str, probe_error: str = "") -> str:
             "winget": ("WeasyPrint needs native Pango/Cairo libs with no unattended Windows installer — "
                        "use the official Docker image (docker pull ghcr.io/cafra-house/office-worker-mcp) or WSL2"),
         }
-        return hints.get(pkg_mgr, hints["apt"]) + f"  [probe failed: {probe_error}]"[:400]
+        base = hints.get(pkg_mgr, hints["apt"])
+        return (base + f"  [probe failed: {probe_error}]")[:400]
     return get_install_hint("render_document", pkg_mgr)
 
 
